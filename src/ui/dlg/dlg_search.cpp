@@ -1,22 +1,24 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "base/foreach.h"
+#include <windows/win/task_dialog.h>
+
+#include "base/format.h"
 #include "base/gfx.h"
 #include "base/string.h"
 #include "library/anime_db.h"
@@ -33,7 +35,6 @@
 #include "ui/menu.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
-#include "win/win_taskdialog.h"
 
 namespace ui {
 
@@ -185,7 +186,7 @@ void SearchDialog::ParseResults(const std::vector<int>& ids) {
     return;
 
   if (ids.empty()) {
-    std::wstring msg = L"No results found for \"" + search_text + L"\".";
+    std::wstring msg = L"No results found for \"{}\"."_format(search_text);
     win::TaskDialog dlg(L"Search Anime", TD_INFORMATION_ICON);
     dlg.SetMainInstruction(msg.c_str());
     dlg.AddButton(L"OK", IDOK);
@@ -204,7 +205,7 @@ void SearchDialog::AddAnimeToList(int anime_id) {
     int i = list_.GetItemCount();
     list_.InsertItem(i, anime_item->IsInList() ? 1 : 0,
                      StatusToIcon(anime_item->GetAiringStatus()), 0, nullptr,
-                     anime_item->GetTitle().c_str(),
+                     anime::GetPreferredTitle(*anime_item).c_str(),
                      static_cast<LPARAM>(anime_item->GetId()));
     list_.SetItem(i, 1, anime::TranslateType(anime_item->GetType()).c_str());
     list_.SetItem(i, 2, anime::TranslateNumber(anime_item->GetEpisodeCount()).c_str());
@@ -224,8 +225,8 @@ void SearchDialog::RefreshList() {
   list_.DeleteAllItems();
 
   // Add anime items to list
-  foreach_(it, anime_ids_)
-    AddAnimeToList(*it);
+  for (const auto& anime_id : anime_ids_)
+    AddAnimeToList(anime_id);
 
   // Redraw
   list_.SetRedraw(TRUE);
@@ -241,8 +242,8 @@ void SearchDialog::Search(const std::wstring& title, bool local) {
     Meow.Search(title, anime_ids_);
     RefreshList();
   } else {
-    ui::ChangeStatusText(L"Searching " + taiga::GetCurrentService()->name() +
-                         L" for \"" + title + L"\"...");
+    ui::ChangeStatusText(L"Searching {} for \"{}\"..."_format(
+                         taiga::GetCurrentService()->name(), title));
     sync::SearchTitle(title, anime::ID_UNKNOWN);
   }
 }

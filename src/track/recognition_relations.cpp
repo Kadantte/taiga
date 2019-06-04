@@ -1,26 +1,28 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include <regex>
 
+#include <semaver/src/semaver.hpp>
+
 #include "base/file.h"
+#include "base/format.h"
 #include "base/log.h"
-#include "base/version.h"
 #include "sync/service.h"
 #include "taiga/path.h"
 #include "taiga/settings.h"
@@ -78,68 +80,70 @@ bool Relation::FindRange(int episode_number, int_pair_t& result) const {
 ////////////////////////////////////////////////////////////////////////////////
 
 static bool ParseRule(const std::wstring& rule) {
-  static std::wstring id_pattern = L"(\\d+|[?~])";
-  static std::wstring episode_pattern = L"(\\d+)(?:-(\\d+|\\?))?";
+  constexpr auto id_pattern = L"((?:\\d+|[?~])(?:\\|(?:\\d+|[?~]))*)";
+  constexpr auto episode_pattern = L"(\\d+)(?:-(\\d+|\\?))?";
   static const std::wregex pattern(
-      id_pattern + L"\\|" + id_pattern + L":" + episode_pattern + L" -> " +
-      id_pattern + L"\\|" + id_pattern + L":" + episode_pattern + L"(!)?");
+      L"{0}:{1} -> {0}:{1}(!)?"_format(id_pattern, episode_pattern));
 
   std::match_results<std::wstring::const_iterator> match_results;
 
-  if (std::regex_match(rule, match_results, pattern)) {
-    auto get_id = [&](size_t first, size_t second) {
-      switch (taiga::GetCurrentServiceId()) {
-        case sync::kMyAnimeList:
-          return ToInt(match_results[first].str());
-        case sync::kHummingbird:
-          return ToInt(match_results[second].str());
-        default:
-          return 0;
-      }
-    };
+  if (!std::regex_match(rule, match_results, pattern))
+    return false;
 
-    auto get_range = [&](size_t first, size_t second) {
-      std::pair<int, int> range;
-      range.first = ToInt(match_results[first].str());
-      if (match_results[second].matched) {
-        if (IsNumericString(match_results[second].str())) {
-          range.second = ToInt(match_results[second].str());
-        } else {
-          range.second = INT_MAX;
-        }
+  auto get_id = [&](size_t index) {
+    std::vector<std::wstring> ids;
+    Split(match_results[index].str(), L"|", ids);
+    switch (taiga::GetCurrentServiceId()) {
+      case sync::kMyAnimeList:
+        return ids.size() > 0 ? ToInt(ids.at(0)) : 0;
+      case sync::kKitsu:
+        return ids.size() > 1 ? ToInt(ids.at(1)) : 0;
+      case sync::kAniList:
+        return ids.size() > 2 ? ToInt(ids.at(2)) : 0;
+      default:
+        return 0;
+    }
+  };
+
+  auto get_range = [&](size_t first, size_t second) {
+    std::pair<int, int> range;
+    range.first = ToInt(match_results[first].str());
+    if (match_results[second].matched) {
+      if (IsNumericString(match_results[second].str())) {
+        range.second = ToInt(match_results[second].str());
       } else {
-        range.second = range.first;
+        range.second = INT_MAX;
       }
-      return range;
-    };
+    } else {
+      range.second = range.first;
+    }
+    return range;
+  };
 
-    int id0 = get_id(1, 2);
-    if (!id0)
-      return false;
-    auto r0 = get_range(3, 4);
+  const int id0 = get_id(1);
+  if (id0) {
+    const auto r0 = get_range(2, 3);
 
-    int id1 = get_id(5, 6);
+    int id1 = get_id(4);
     if (!id1)
       id1 = id0;
-    auto r1 = get_range(7, 8);
+    const auto r1 = get_range(5, 6);
 
     relations[id0].AddRange(id1, r0, r1);
 
-    if (match_results[9].matched)
+    if (match_results[7].matched)
       relations[id1].AddRange(id1, r0, r1);
-
-    return true;
   }
 
-  return false;
+  return true;
 }
 
 bool Engine::ReadRelations() {
-  std::wstring path = taiga::GetPath(taiga::kPathDatabaseAnimeRelations);
+  std::wstring path = taiga::GetPath(taiga::Path::DatabaseAnimeRelations);
   std::string document;
 
   if (!ReadFromFile(path, document)) {
-    LOG(LevelWarning, L"Could not read anime relations data.");
+    LOGW(L"Could not read anime relations data.");
     Settings.Set(taiga::kRecognition_RelationsLastModified, std::wstring());
     return false;
   }
@@ -153,12 +157,12 @@ bool Engine::ReadRelations(const std::string& document) {
   std::vector<std::wstring> lines;
   Split(StrToWstr(document), L"\n", lines);
 
-  enum FileSections {
-    kUnknownSection,
-    kMetaSection,
-    kRulesSection,
+  enum class FileSection {
+    Unknown,
+    Meta,
+    Rules,
   };
-  auto current_section = kUnknownSection;
+  auto current_section = FileSection::Unknown;
 
   for (auto& line : lines) {
     Trim(line, L"\r ");
@@ -171,17 +175,17 @@ bool Engine::ReadRelations(const std::string& document) {
     if (StartsWith(line, L"::")) {
       auto section = line.substr(2);
       if (section == L"meta") {
-        current_section = kMetaSection;
+        current_section = FileSection::Meta;
       } else if (section == L"rules") {
-        current_section = kRulesSection;
+        current_section = FileSection::Rules;
       } else {
-        current_section = kUnknownSection;
+        current_section = FileSection::Unknown;
       }
       continue;
     }
 
     switch (current_section) {
-      case kMetaSection: {
+      case FileSection::Meta: {
         TrimLeft(line, L"- ");
         static const std::wregex pattern(L"([a-z_]+): (.+)");
         std::match_results<std::wstring::const_iterator> match_results;
@@ -189,20 +193,19 @@ bool Engine::ReadRelations(const std::string& document) {
           auto name = match_results[1].str();
           auto value = match_results[2].str();
           if (name == L"version") {
-            base::SemanticVersion version(value);
+            semaver::Version version(WstrToStr(value));
             if (version > Taiga.version)
-              LOG(LevelDebug, L"Anime relations version is larger than "
-                              L"application version.");
+              LOGD(L"Anime relations version is larger than application version.");
           } else if (name == L"last_modified") {
             Settings.Set(taiga::kRecognition_RelationsLastModified, value);
           }
         }
         break;
       }
-      case kRulesSection: {
+      case FileSection::Rules: {
         TrimLeft(line, L"- ");
         if (!ParseRule(line))
-          LOG(LevelWarning, L"Could not parse rule: " + line);
+          LOGW(L"Could not parse rule: {}", line);
         break;
       }
     }

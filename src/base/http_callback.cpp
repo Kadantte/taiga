@@ -1,17 +1,17 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -99,7 +99,7 @@ int Client::DebugHandler(curl_infotype infotype, std::string data,
       text = L"=> Request header";
       break;
     case CURLINFO_DATA_IN:
-      if (content_encoding_ == kContentEncodingGzip && !simulated_callback)
+      if (content_encoding_ == ContentEncoding::Gzip && !simulated_callback)
         return 0;  // Don't output garbage
       text = L"<= Recv data";
       break;
@@ -120,7 +120,10 @@ int Client::DebugHandler(curl_infotype infotype, std::string data,
   if (simulated_callback)
     text += L"<simulated> | ";
 
-  LOG(LevelDebug, text + StrToWstr(data));
+  auto wdata = StrToWstr(data);
+  Trim(wdata, L" \r\n");
+
+  LOGD(text + wdata);
 
   return 0;
 }

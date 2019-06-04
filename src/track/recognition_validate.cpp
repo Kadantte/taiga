@@ -1,20 +1,22 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#include <set>
 
 #include <anitomy/anitomy/keyword.h>
 
@@ -45,7 +47,7 @@ bool Engine::ValidateOptions(anime::Episode& episode,
                              const MatchOptions& match_options,
                              bool redirect) const {
   if (match_options.check_airing_date)
-    if (!anime::IsAiredYet(anime_item))
+    if (anime_item.GetDateStart() && !anime::IsAiredYet(anime_item))
       return false;
 
   if (match_options.check_anime_type)
@@ -83,11 +85,9 @@ bool Engine::ValidateEpisodeNumber(anime::Episode& episode,
     if (SearchEpisodeRedirection(anime_item.GetId(), range,
                                  destination_id, destination_range)) {
       if (redirect) {
-        LOG(LevelDebug, L"Redirection: " +
-                        ToWstr(anime_item.GetId()) + L":" +
-                        anime::GetEpisodeRange(episode) + L" -> " +
-                        ToWstr(destination_id) + L":" +
-                        anime::GetEpisodeRange(destination_range));
+        LOGD(L"Redirection: {}:{} -> {}:{}",
+             anime_item.GetId(), anime::GetEpisodeRange(episode),
+             destination_id, anime::GetEpisodeRange(destination_range));
         episode.anime_id = destination_id;
         episode.set_episode_number_range(destination_range);
       }
@@ -138,7 +138,7 @@ bool Engine::IsValidAnimeType(const anime::Episode& episode) const {
   auto anime_types = episode.elements().get_all(category);
   for (const auto& anime_type : anime_types) {
     if (!ValidateAnitomyElement(anime_type, category)) {
-      LOG(LevelDebug, episode.file_name_with_extension());
+      LOGD(episode.file_name_with_extension());
       return false;
     }
   }
@@ -146,11 +146,8 @@ bool Engine::IsValidAnimeType(const anime::Episode& episode) const {
   return true;
 }
 
-bool Engine::IsValidAnimeType(const std::wstring& path) const {
-  track::recognition::ParseOptions parse_options;
-  parse_options.parse_path = true;
-  parse_options.streaming_media = false;
-
+bool Engine::IsValidAnimeType(const std::wstring& path,
+                              const ParseOptions& parse_options) const {
   anime::Episode episode;
 
   if (Parse(path, parse_options, episode))
@@ -160,9 +157,17 @@ bool Engine::IsValidAnimeType(const std::wstring& path) const {
   return true;
 }
 
+bool Engine::IsValidAnimeType(const std::wstring& path) const {
+  track::recognition::ParseOptions parse_options;
+  parse_options.parse_path = true;
+  parse_options.streaming_media = false;
+
+  return IsValidAnimeType(path, parse_options);
+}
+
 bool Engine::IsValidFileExtension(const anime::Episode& episode) const {
   if (!IsValidFileExtension(episode.file_extension())) {
-    LOG(LevelDebug, episode.file_name_with_extension());
+    LOGD(episode.file_name_with_extension());
     return false;
   }
 
@@ -174,6 +179,13 @@ bool Engine::IsValidFileExtension(const std::wstring& extension) const {
     return false;
 
   return ValidateAnitomyElement(extension, anitomy::kElementFileExtension);
+}
+
+bool Engine::IsAudioFileExtension(const std::wstring& extension) const {
+  static const std::set<std::wstring> extensions{
+    L"aac", L"aiff", L"flac", L"m4a", L"mka", L"mp3", L"ogg", L"wav", L"wma",
+  };
+  return extensions.count(ToLower_Copy(extension));
 }
 
 }  // namespace recognition

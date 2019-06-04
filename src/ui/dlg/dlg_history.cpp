@@ -1,22 +1,23 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "base/foreach.h"
+#include "base/format.h"
 #include "base/gfx.h"
 #include "base/log.h"
 #include "base/string.h"
@@ -183,7 +184,7 @@ void HistoryDialog::RefreshList() {
   foreach_cr_(it, History.queue.items) {
     auto anime_item = AnimeDatabase.FindItem(it->anime_id);
     if (!anime_item) {
-      LOG(LevelError, L"Item does not exist in the database: " + ToWstr(it->anime_id));
+      LOGE(L"Item does not exist in the database: {}", it->anime_id);
       continue;
     }
 
@@ -212,13 +213,15 @@ void HistoryDialog::RefreshList() {
       AppendString(details, !it->enable_rewatching || *it->enable_rewatching != TRUE ?
                    L"Status: " + anime::TranslateMyStatus(*it->status, false) : L"Rewatching");
     if (it->tags)
-      AppendString(details, L"Tags: \"" + *it->tags + L"\"");
+      AppendString(details, L"Tags: \"{}\""_format(*it->tags));
+    if (it->notes)
+      AppendString(details, L"Notes: \"{}\""_format(*it->notes));
     if (it->date_start)
       AppendString(details, L"Date started: " + std::wstring(*it->date_start));
     if (it->date_finish)
       AppendString(details, L"Date completed: " + std::wstring(*it->date_finish));
 
-    list_.InsertItem(i, 0, icon, 0, nullptr, anime_item->GetTitle().c_str(),
+    list_.InsertItem(i, 0, icon, 0, nullptr, anime::GetPreferredTitle(*anime_item).c_str(),
                      static_cast<LPARAM>(it->anime_id));
     list_.SetItem(i, 1, details.c_str());
     list_.SetItem(i, 2, it->time.c_str());
@@ -228,7 +231,7 @@ void HistoryDialog::RefreshList() {
   foreach_cr_(it, History.items) {
     auto anime_item = AnimeDatabase.FindItem(it->anime_id);
     if (!anime_item) {
-      LOG(LevelError, L"Item does not exist in the database: " + ToWstr(it->anime_id));
+      LOGE(L"Item does not exist in the database: {}", it->anime_id);
       continue;
     }
 
@@ -237,7 +240,7 @@ void HistoryDialog::RefreshList() {
     std::wstring details;
     AppendString(details, L"Episode: " + anime::TranslateNumber(*it->episode));
 
-    list_.InsertItem(i, 1, icon, 0, nullptr, anime_item->GetTitle().c_str(),
+    list_.InsertItem(i, 1, icon, 0, nullptr, anime::GetPreferredTitle(*anime_item).c_str(),
                      static_cast<LPARAM>(it->anime_id));
     list_.SetItem(i, 1, details.c_str());
     list_.SetItem(i, 2, it->time.c_str());

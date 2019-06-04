@@ -1,23 +1,22 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "file.h"
-#include "foreach.h"
 #include "http.h"
 #include "gzip.h"
 #include "log.h"
@@ -30,7 +29,7 @@ namespace http {
 bool Client::MakeRequest(const Request& request) {
   // Check if the client is busy
   if (busy_) {
-    LOG(LevelWarning, L"Client is busy. ID: " + request_.uid);
+    LOGW(L"Client is busy. ID: {}", request_.uid);
     return false;
   } else {
     busy_ = true;
@@ -38,7 +37,7 @@ bool Client::MakeRequest(const Request& request) {
 
   // Set the new request
   request_ = request;
-  LOG(LevelDebug, L"ID: " + request_.uid);
+  LOGD(L"ID: {}", request_.uid);
 
   // Ensure that the response has the same parameter and UID as the request
   response_.parameter = request_.parameter;
@@ -99,7 +98,7 @@ bool Client::SetRequestOptions() {
   // Set URL
   std::wstring url = request_.url.Build();
   TAIGA_CURL_SET_OPTION(CURLOPT_URL, WstrToStr(url).c_str());
-  LOG(LevelDebug, L"URL: " + url);
+  LOGD(L"URL: {}", url);
 
   // Set allowed protocols
   int protocols = CURLPROTO_HTTP | CURLPROTO_HTTPS;
@@ -145,11 +144,9 @@ bool Client::SetRequestOptions() {
     TAIGA_CURL_SET_OPTION(CURLOPT_POSTFIELDS, optional_data_.c_str());
     TAIGA_CURL_SET_OPTION(CURLOPT_POSTFIELDSIZE, optional_data_.size());
     TAIGA_CURL_SET_OPTION(CURLOPT_POST, TRUE);
-    if (request_.method != L"POST") {
-      std::string custom_method = WstrToStr(request_.method);
-      TAIGA_CURL_SET_OPTION(CURLOPT_CUSTOMREQUEST, custom_method.c_str());
-    }
   }
+  const auto custom_method = WstrToStr(request_.method);
+  TAIGA_CURL_SET_OPTION(CURLOPT_CUSTOMREQUEST, custom_method.c_str());
 
   // Set referrer
   if (!referer_.empty()) {
@@ -166,6 +163,16 @@ bool Client::SetRequestOptions() {
   // Set custom headers
   BuildRequestHeader();
   TAIGA_CURL_SET_OPTION(CURLOPT_HTTPHEADER, header_list_);
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Connection options
+
+  // Abort if slower than 1 KiB/s during 30 seconds
+  TAIGA_CURL_SET_OPTION(CURLOPT_LOW_SPEED_LIMIT, 1024L);
+  TAIGA_CURL_SET_OPTION(CURLOPT_LOW_SPEED_TIME, 30L);
+
+  // Complete connection within 30 seconds (default is 300 seconds)
+  TAIGA_CURL_SET_OPTION(CURLOPT_CONNECTTIMEOUT, 30L);
 
   //////////////////////////////////////////////////////////////////////////////
   // Security options
@@ -198,7 +205,7 @@ bool Client::Perform() {
 
   if (code == CURLE_OK) {
     if (!write_buffer_.empty()) {
-      if (content_encoding_ == kContentEncodingGzip) {
+      if (content_encoding_ == ContentEncoding::Gzip) {
         std::string compressed;
         std::swap(write_buffer_, compressed);
         UncompressGzippedString(compressed, write_buffer_);
@@ -236,10 +243,10 @@ void Client::BuildRequestHeader() {
       request_.header[L"Content-Type"] = L"application/x-www-form-urlencoded";
 
   // Append available header fields
-  foreach_(it, request_.header) {
-    std::string header = WstrToStr(it->first);
-    if (!it->second.empty()) {
-      header += ": " + WstrToStr(it->second);
+  for (const auto& pair : request_.header) {
+    std::string header = WstrToStr(pair.first);
+    if (!pair.second.empty()) {
+      header += ": " + WstrToStr(pair.second);
     } else {
       header += ";";
     }

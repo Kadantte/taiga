@@ -1,23 +1,22 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef TAIGA_BASE_STRING_H
-#define TAIGA_BASE_STRING_H
+#pragma once
 
 #include <array>
 #include <string>
@@ -87,14 +86,21 @@ void ToUpper(std::wstring& str, bool use_locale = false);
 std::wstring ToUpper_Copy(std::wstring str, bool use_locale = false);
 
 bool ToBool(const std::wstring& str);
+double ToDouble(const std::string& str);
 double ToDouble(const std::wstring& str);
 int ToInt(const std::string& str);
 int ToInt(const std::wstring& str);
+UINT64 ToUint64(const std::string& str);
+UINT64 ToUint64(const std::wstring& str);
+time_t ToTime(const std::string& str);
+time_t ToTime(const std::wstring& str);
 std::string ToStr(const INT& value);
 std::wstring ToWstr(const INT& value);
 std::wstring ToWstr(const UINT& value);
+std::wstring ToWstr(const ULONG& value);
 std::wstring ToWstr(const INT64& value);
 std::wstring ToWstr(const UINT64& value);
+std::string ToStr(const double& value, int count = 16);
 std::wstring ToWstr(const double& value, int count = 16);
 
 std::wstring LimitText(const std::wstring& str, unsigned int limit, const std::wstring& tail = L"...");
@@ -104,6 +110,7 @@ void TrimRight(std::wstring& str, const wchar_t trim_chars[] = L" ");
 
 void AddTrailingSlash(std::wstring& str);
 std::wstring AddTrailingSlash(const std::wstring& str);
+void RemoveTrailingSlash(std::wstring& str);
 std::wstring GetFileExtension(const std::wstring& str);
 std::wstring GetFileName(const std::wstring& str);
 std::wstring GetFileWithoutExtension(std::wstring str);
@@ -114,6 +121,3 @@ void AppendString(std::wstring& str0, const std::wstring& str1, const std::wstri
 const std::wstring& EmptyString();
 std::wstring PadChar(std::wstring str, const wchar_t ch, const size_t len);
 std::wstring PushString(const std::wstring& str1, const std::wstring& str2);
-void ReadStringFromResource(LPCWSTR name, LPCWSTR type, std::wstring& output);
-
-#endif  // TAIGA_BASE_STRING_H

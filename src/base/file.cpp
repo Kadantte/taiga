@@ -1,17 +1,17 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -19,11 +19,17 @@
 #include <fstream>
 #include <shlobj.h>
 
-#include "error.h"
+#include <anisthesia/src/win/util.h>
+#include <windows/win/error.h>
+#include <windows/win/registry.h>
+
 #include "file.h"
+#include "format.h"
+#include "log.h"
 #include "string.h"
 #include "time.h"
-#include "win/win_registry.h"
+
+using anisthesia::win::Handle;
 
 HANDLE OpenFileForGenericRead(const std::wstring& path) {
   return ::CreateFile(GetExtendedLengthPath(path).c_str(),
@@ -40,15 +46,14 @@ HANDLE OpenFileForGenericWrite(const std::wstring& path) {
 ////////////////////////////////////////////////////////////////////////////////
 
 unsigned long GetFileAge(const std::wstring& path) {
-  HANDLE file_handle = OpenFileForGenericRead(path);
+  Handle file_handle{OpenFileForGenericRead(path)};
 
-  if (file_handle == INVALID_HANDLE_VALUE)
+  if (file_handle.get() == INVALID_HANDLE_VALUE)
     return 0;
 
   // Get the time the file was last modified
   FILETIME ft_file;
-  BOOL result = GetFileTime(file_handle, nullptr, nullptr, &ft_file);
-  CloseHandle(file_handle);
+  BOOL result = GetFileTime(file_handle.get(), nullptr, nullptr, &ft_file);
 
   if (!result)
     return 0;
@@ -73,16 +78,15 @@ unsigned long GetFileAge(const std::wstring& path) {
 }
 
 std::wstring GetFileLastModifiedDate(const std::wstring& path) {
-  HANDLE file_handle = OpenFileForGenericRead(path);
-  if (file_handle != INVALID_HANDLE_VALUE) {
+  Handle file_handle{OpenFileForGenericRead(path)};
+  if (file_handle.get() != INVALID_HANDLE_VALUE) {
     FILETIME ft_file = {0};
-    BOOL result = GetFileTime(file_handle, nullptr, nullptr, &ft_file);
-    CloseHandle(file_handle);
+    BOOL result = GetFileTime(file_handle.get(), nullptr, nullptr, &ft_file);
     if (result) {
       SYSTEMTIME st_file = {0};
       result = FileTimeToSystemTime(&ft_file, &st_file);
       if (result)
-        return Date(st_file.wYear, st_file.wMonth, st_file.wDay);
+        return static_cast<std::wstring>(Date(st_file));
     }
   }
 
@@ -92,13 +96,12 @@ std::wstring GetFileLastModifiedDate(const std::wstring& path) {
 QWORD GetFileSize(const std::wstring& path) {
   QWORD file_size = 0;
 
-  HANDLE file_handle = OpenFileForGenericRead(path);
+  Handle file_handle{OpenFileForGenericRead(path)};
 
-  if (file_handle != INVALID_HANDLE_VALUE) {
+  if (file_handle.get() != INVALID_HANDLE_VALUE) {
     LARGE_INTEGER size;
-    if (::GetFileSizeEx(file_handle, &size))
+    if (::GetFileSizeEx(file_handle.get(), &size))
       file_size = size.QuadPart;
-    CloseHandle(file_handle);
   }
 
   return file_size;
@@ -116,6 +119,7 @@ QWORD GetFolderSize(const std::wstring& path, bool recursive) {
   };
 
   FileSearchHelper helper;
+  helper.set_log_errors(false);
   helper.set_skip_subdirectories(!recursive);
   helper.Search(path, nullptr, OnFile);
 
@@ -124,49 +128,53 @@ QWORD GetFolderSize(const std::wstring& path, bool recursive) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-bool Execute(const std::wstring& path, const std::wstring& parameters,
-             int show_command) {
+static bool ShellExecute(const std::wstring& verb, const std::wstring& path,
+                         const std::wstring& parameters, int show_command) {
   if (path.empty())
     return false;
 
   if (path.length() > MAX_PATH)
-    return ExecuteFile(path, parameters);
+    LOGW(L"Path is longer than MAX_PATH: {}", path);
 
-  auto value = ShellExecute(nullptr, L"open", path.c_str(), parameters.c_str(),
-                            nullptr, show_command);
-  return reinterpret_cast<int>(value) > 32;
-}
+  SHELLEXECUTEINFO info = {0};
+  info.cbSize = sizeof(SHELLEXECUTEINFO);
+  info.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+  info.lpVerb = verb.empty() ? nullptr : verb.c_str();
+  info.lpFile = path.c_str();
+  info.lpParameters = parameters.empty() ? nullptr : parameters.c_str();
+  info.nShow = show_command;
 
-bool ExecuteFile(const std::wstring& path, std::wstring parameters) {
-  std::wstring exe_path = GetDefaultAppPath(L"." + GetFileExtension(path), L"");
-
-  if (exe_path.empty())
-    return false;
-
-  parameters = L"\"" + exe_path + L"\" " +
-               L"\"" + GetExtendedLengthPath(path) + L"\"" +
-               parameters;
-
-  PROCESS_INFORMATION process_information = {0};
-  STARTUPINFO startup_info = {sizeof(STARTUPINFO)};
-
-  if (!CreateProcess(nullptr, const_cast<wchar_t*>(parameters.c_str()),
-                     nullptr, nullptr, FALSE, 0, nullptr, nullptr,
-                     &startup_info, &process_information)) {
+  if (::ShellExecuteEx(&info) != TRUE) {
+    auto error_message = win::FormatError(::GetLastError());
+    TrimRight(error_message, L"\r\n");
+    LOGE(L"ShellExecuteEx failed: {}\nVerb: {}\nPath: {}\nParameters: {}",
+         error_message, verb, path, parameters);
     return false;
   }
-
-  CloseHandle(process_information.hProcess);
-  CloseHandle(process_information.hThread);
 
   return true;
 }
 
-void ExecuteLink(const std::wstring& link) {
-  ShellExecute(nullptr, nullptr, link.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+bool Execute(const std::wstring& path, const std::wstring& parameters,
+             int show_command) {
+  return ShellExecute(L"open", path, parameters, show_command);
+}
+
+bool ExecuteLink(const std::wstring& link) {
+  return ShellExecute({}, link, {}, SW_SHOWNORMAL);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+bool OpenFolderAndSelectFile(const std::wstring& path) {
+  HRESULT result = S_FALSE;
+  const auto pidl = ::ILCreateFromPath(path.c_str());
+  if (pidl) {
+    result = ::SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
+    ::ILFree(pidl);
+  }
+  return result == S_OK;
+}
 
 bool CreateFolder(const std::wstring& path) {
   auto result = SHCreateDirectoryEx(nullptr, path.c_str(), nullptr);
@@ -187,27 +195,39 @@ int DeleteFolder(std::wstring path) {
   return SHFileOperation(&fos);
 }
 
-void ConvertToLongPath(std::wstring& path) {
-  const DWORD buffer_size = 4096;
-  WCHAR buffer[buffer_size] = {0};
-  if (GetLongPathName(path.c_str(), buffer, buffer_size) > 0)
-    path = std::wstring(buffer);
-}
-
 // Extends the length limit from 260 to 32767 characters
 // See: http://msdn.microsoft.com/en-us/library/windows/desktop/aa365247%28v=vs.85%29.aspx#maxpath
 std::wstring GetExtendedLengthPath(const std::wstring& path) {
-  const std::wstring prefix = L"\\\\?\\";
+  const std::wstring prefix = LR"(\\?\)";
 
   if (StartsWith(path, prefix))
     return path;
 
   // "\\computer\path" -> "\\?\UNC\computer\path"
-  if (StartsWith(path, L"\\\\"))
-    return prefix + L"UNC\\" + path.substr(2);
+  if (StartsWith(path, LR"(\\)"))
+    return prefix + LR"(UNC\)" + path.substr(2);
 
   // "C:\path" -> "\\?\C:\path"
   return prefix + path;
+}
+
+std::wstring GetNormalizedPath(std::wstring path) {
+  constexpr auto kPrefix = LR"(\\?\)";
+  constexpr auto kUnc = L"UNC";
+
+  if (StartsWith(path, kPrefix)) {
+    // "\\?\C:\path" -> "C:\path"
+    // "\\?\UNC\computer\path" -> "UNC\computer\path"
+    EraseLeft(path, kPrefix);
+
+    if (StartsWith(path, kUnc)) {
+      // "UNC\computer\path" -> "\\computer\path"
+      EraseLeft(path, kUnc);
+      path.insert(0, 1, L'\\');
+    }
+  }
+
+  return path;
 }
 
 bool IsDirectory(const WIN32_FIND_DATA& find_data) {
@@ -227,77 +247,18 @@ bool IsValidDirectory(const WIN32_FIND_DATA& find_data) {
          wcscmp(find_data.cFileName, L"..") != 0;
 }
 
-bool TranslateDeviceName(std::wstring& path) {
-  if (!StartsWith(path, L"\\Device\\"))
-    return false;
-
-  size_t pos = path.find('\\', 8);
-  if (pos == std::wstring::npos)
-    return false;
-  std::wstring device_name = path.substr(0, pos);
-  path = path.substr(pos);
-
-  const int drive_letters_size = 1024;
-  WCHAR drive_letters[drive_letters_size] = {'\0'};
-  if (!GetLogicalDriveStrings(drive_letters_size - 1, drive_letters))
-    return false;
-
-  WCHAR* p = drive_letters;
-  WCHAR device[MAX_PATH];
-  WCHAR logical_drive[3] = L" :";
-  std::wstring drive_letter;
-
-  do {
-    *logical_drive = *p;
-    if (QueryDosDevice(logical_drive, device, MAX_PATH)) {
-      if (device_name == device) {
-        drive_letter = logical_drive;
-      } else {
-        const std::wstring network_prefix = L"\\Device\\LanmanRedirector";
-        std::wstring location = device;
-        if (StartsWith(location, network_prefix)) {
-          location.erase(0, network_prefix.size());
-          if (StartsWith(location, L"\\;")) {
-            pos = location.find('\\', 1);
-            if (pos != std::wstring::npos)
-              location.erase(0, pos);
-          }
-          if (StartsWith(path, location)) {
-            drive_letter = logical_drive;
-            path.erase(0, location.size());
-          }
-        }
-      }
-    }
-    while (*p++);
-  } while (drive_letter.empty() && *p);
-
-  if (drive_letter.empty())
-    drive_letter = L"\\";  // assuming that it's a remote drive
-
-  path = drive_letter + path;
-
-  return true;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 
 bool FileExists(const std::wstring& file) {
   if (file.empty())
     return false;
 
-  HANDLE file_handle = OpenFileForGenericRead(file);
-
-  if (file_handle != INVALID_HANDLE_VALUE) {
-    CloseHandle(file_handle);
-    return true;
-  }
-
-  return false;
+  Handle file_handle{OpenFileForGenericRead(file)};
+  return file_handle.get() != INVALID_HANDLE_VALUE;
 }
 
 bool FolderExists(const std::wstring& path) {
-  base::ErrorMode error_mode(SEM_FAILCRITICALERRORS);
+  win::ErrorMode error_mode(SEM_FAILCRITICALERRORS);
 
   auto file_attr = GetFileAttributes(GetExtendedLengthPath(path).c_str());
 
@@ -306,7 +267,7 @@ bool FolderExists(const std::wstring& path) {
 }
 
 bool PathExists(const std::wstring& path) {
-  base::ErrorMode error_mode(SEM_FAILCRITICALERRORS);
+  win::ErrorMode error_mode(SEM_FAILCRITICALERRORS);
 
   auto file_attr = GetFileAttributes(GetExtendedLengthPath(path).c_str());
 
@@ -315,6 +276,7 @@ bool PathExists(const std::wstring& path) {
 
 void ValidateFileName(std::wstring& file) {
   EraseChars(file, L"\\/:*?\"<>|");
+  TrimRight(file, L".");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -360,6 +322,49 @@ std::wstring GetDefaultAppPath(const std::wstring& extension,
   return path.empty() ? default_value : path;
 }
 
+std::wstring GetKnownFolderPath(REFKNOWNFOLDERID rfid) {
+  std::wstring output;
+
+  PWSTR path = nullptr;
+  if (SUCCEEDED(SHGetKnownFolderPath(rfid, KF_FLAG_CREATE, nullptr, &path))) {
+    output = path;
+  }
+  CoTaskMemFree(path);
+
+  return output;
+}
+
+std::wstring GetFinalPathNameByHandle(HANDLE handle) {
+  std::wstring buffer(MAX_PATH, '\0');
+
+  auto get_final_path_name_by_handle = [&]() {
+    return ::GetFinalPathNameByHandle(handle, &buffer.front(), buffer.size(),
+        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+  };
+
+  auto result = get_final_path_name_by_handle();
+  if (result > buffer.size()) {
+    buffer.resize(result, '\0');
+    result = get_final_path_name_by_handle();
+  }
+
+  if (result < buffer.size())
+    buffer.resize(result);
+
+  return buffer;
+}
+
+std::wstring GetFinalPath(const std::wstring& path) {
+  // FILE_FLAG_BACKUP_SEMANTICS flag is required for directories
+  Handle handle{::CreateFile(path.c_str(), 0, 0, nullptr, OPEN_EXISTING,
+                             FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
+
+  if (handle.get() == INVALID_HANDLE_VALUE)
+    return path;
+
+  return GetFinalPathNameByHandle(handle.get());
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 unsigned int PopulateFiles(std::vector<std::wstring>& file_list,
@@ -379,6 +384,7 @@ unsigned int PopulateFiles(std::vector<std::wstring>& file_list,
   };
 
   FileSearchHelper helper;
+  helper.set_log_errors(false);
   helper.set_skip_subdirectories(!recursive);
   helper.Search(path, nullptr, OnFile);
 
@@ -397,6 +403,7 @@ int PopulateFolders(std::vector<std::wstring>& folder_list,
   };
 
   FileSearchHelper helper;
+  helper.set_log_errors(false);
   helper.set_skip_subdirectories(true);
   helper.Search(path, OnDirectory, nullptr);
 
@@ -406,20 +413,21 @@ int PopulateFolders(std::vector<std::wstring>& folder_list,
 ////////////////////////////////////////////////////////////////////////////////
 
 bool ReadFromFile(const std::wstring& path, std::string& output) {
-  std::ifstream is;
-  is.open(WstrToStr(path).c_str(), std::ios::binary);
+  Handle file_handle{OpenFileForGenericRead(path)};
 
-  is.seekg(0, std::ios::end);
-  size_t len = static_cast<size_t>(is.tellg());
+  if (file_handle.get() == INVALID_HANDLE_VALUE)
+    return false;
 
-  if (len != -1) {
-    output.resize(len);
-    is.seekg(0, std::ios::beg);
-    is.read((char*)output.data(), output.size());
-  }
+  LARGE_INTEGER file_size{};
+  if (::GetFileSizeEx(file_handle.get(), &file_size) == FALSE)
+    return false;
+  output.resize(static_cast<size_t>(file_size.QuadPart));
 
-  is.close();
-  return len != -1;
+  DWORD bytes_read = 0;
+  const BOOL result = ::ReadFile(file_handle.get(), output.data(),
+                                 output.size(), &bytes_read, nullptr);
+
+  return result != FALSE && bytes_read == output.size();
 }
 
 bool SaveToFile(LPCVOID data, DWORD length, const string_t& path,
@@ -436,11 +444,10 @@ bool SaveToFile(LPCVOID data, DWORD length, const string_t& path,
 
   // Save the data
   BOOL result = FALSE;
-  HANDLE file_handle = OpenFileForGenericWrite(path);
-  if (file_handle != INVALID_HANDLE_VALUE) {
+  Handle file_handle{OpenFileForGenericWrite(path)};
+  if (file_handle.get() != INVALID_HANDLE_VALUE) {
     DWORD bytes_written = 0;
-    result = ::WriteFile(file_handle, data, length, &bytes_written, nullptr);
-    ::CloseHandle(file_handle);
+    result = ::WriteFile(file_handle.get(), data, length, &bytes_written, nullptr);
   }
 
   return result != FALSE;
@@ -456,22 +463,50 @@ bool SaveToFile(const std::string& data, const std::wstring& path,
 
 ////////////////////////////////////////////////////////////////////////////////
 
-std::wstring ToSizeString(QWORD qwSize) {
-  std::wstring size, unit;
+enum Unit : UINT64 {
+  kKB  = 1000,
+  kKiB = 1024,
+  kMB  = 1000000,
+  kMiB = 1048576,
+  kGB  = 1000000000,
+  kGiB = 1073741824,
+  kTB  = 1000000000000,
+  kTiB = 1099511627776,
+};
 
-  if (qwSize > 1073741824) {      // 2^30
-    size = ToWstr(static_cast<double>(qwSize) / 1073741824, 2);
-    unit = L" GB";
-  } else if (qwSize > 1048576) {  // 2^20
-    size = ToWstr(static_cast<double>(qwSize) / 1048576, 2);
-    unit = L" MB";
-  } else if (qwSize > 1024) {     // 2^10
-    size = ToWstr(static_cast<double>(qwSize) / 1024, 2);
-    unit = L" KB";
-  } else {
-    size = ToWstr(qwSize);
-    unit = L" bytes";
+UINT64 ParseSizeString(std::wstring value) {
+  std::wstring unit;
+  const auto pos = value.find_first_not_of(L"0123456789.");
+  if (pos != value.npos) {
+    unit = value.substr(pos);
+    value.resize(pos);
+    Trim(unit, L"\r\n\t ");
   }
 
-  return size + unit;
+  const auto size = [&unit]() -> UINT64 {
+    if (IsEqual(unit, L"KB")) return Unit::kKB;
+    if (IsEqual(unit, L"KiB")) return Unit::kKiB;
+    if (IsEqual(unit, L"MB")) return Unit::kMB;
+    if (IsEqual(unit, L"MiB")) return Unit::kMiB;
+    if (IsEqual(unit, L"GB")) return Unit::kGB;
+    if (IsEqual(unit, L"GiB")) return Unit::kGiB;
+    if (IsEqual(unit, L"TB")) return Unit::kTB;
+    if (IsEqual(unit, L"TiB")) return Unit::kTiB;
+    return 1;
+  }();
+
+  return static_cast<UINT64>(size * ToDouble(value));
+}
+
+std::wstring ToSizeString(const UINT64 size) {
+  const auto to_wstr = [&size](const Unit unit) {
+    return ToWstr(static_cast<double>(size) / unit, 1);
+  };
+
+  if (size >= Unit::kTiB) return to_wstr(Unit::kTiB) + L" TiB";
+  if (size >= Unit::kGiB) return to_wstr(Unit::kGiB) + L" GiB";
+  if (size >= Unit::kMiB) return to_wstr(Unit::kMiB) + L" MiB";
+  if (size >= Unit::kKiB) return to_wstr(Unit::kKiB) + L" KiB";
+
+  return ToWstr(size) + L" bytes";
 }

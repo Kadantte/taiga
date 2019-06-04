@@ -1,17 +1,17 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -39,15 +39,37 @@ std::wstring DecodeText(std::wstring text) {
 
   StripHtmlTags(text);
   DecodeHtmlEntities(text);
+  Trim(text, L" \t\r\n");
 
   return text;
 }
 
 std::wstring EraseBbcode(std::wstring& str) {
   using namespace std::regex_constants;
-  const std::wregex pattern(L"\\[/?(b|i|u|(size(=[0-9]+)?)|(url(=[^\\]]*)?))\\]",
-                            nosubs | optimize);
+  const std::wregex pattern(
+      L"\\[/?(b|i|quote|u|(color(=[#\\w]+)?)|(size(=[0-9]+)?)|(url(=[^\\]]*)?))\\]",
+      nosubs | optimize);
   return std::regex_replace(str, pattern, L"");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+std::vector<Rating> GetMyRatings() {
+  constexpr int k = anime::kUserScoreMax / 10;
+
+  return {
+    { 0,      L"(0) No Score"},
+    { 1 * k,  L"(1) Appalling"},
+    { 2 * k,  L"(2) Horrible"},
+    { 3 * k,  L"(3) Very Bad"},
+    { 4 * k,  L"(4) Bad"},
+    { 5 * k,  L"(5) Average"},
+    { 6 * k,  L"(6) Fine"},
+    { 7 * k,  L"(7) Good"},
+    { 8 * k,  L"(8) Very Good"},
+    { 9 * k,  L"(9) Great"},
+    {10 * k, L"(10) Masterpiece"},
+  };
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -60,7 +82,7 @@ int TranslateSeriesStatusFrom(int value) {
     case kNotYetAired: return anime::kNotYetAired;
   }
 
-  LOG(LevelWarning, L"Invalid value: " + ToWstr(value));
+  LOGW(L"Invalid value: {}", value);
   return anime::kUnknownStatus;
 }
 
@@ -73,7 +95,7 @@ int TranslateSeriesStatusFrom(const std::wstring& value) {
     return anime::kNotYetAired;
   }
 
-  LOG(LevelWarning, L"Invalid value: " + value);
+  LOGW(L"Invalid value: {}", value);
   return anime::kUnknownStatus;
 }
 
@@ -88,7 +110,22 @@ int TranslateSeriesTypeFrom(int value) {
     case kMusic: return anime::kMusic;
   }
 
-  LOG(LevelWarning, L"Invalid value: " + ToWstr(value));
+  LOGW(L"Invalid value: {}", value);
+  return anime::kUnknownType;
+}
+
+int TranslateSeriesTypeTo(int value) {
+  switch (value) {
+    case anime::kUnknownType: return kUnknownType;
+    case anime::kTv: return kTv;
+    case anime::kOva: return kOva;
+    case anime::kMovie: return kMovie;
+    case anime::kSpecial: return kSpecial;
+    case anime::kOna: return kOna;
+    case anime::kMusic: return kMusic;
+  }
+
+  LOGW(L"Invalid value: {}", value);
   return anime::kUnknownType;
 }
 
@@ -107,7 +144,9 @@ int TranslateSeriesTypeFrom(const std::wstring& value) {
     return anime::kMusic;
   }
 
-  LOG(LevelWarning, L"Invalid value: " + value);
+  if (!value.empty())
+    LOGW(L"Invalid value: {}", value);
+
   return anime::kUnknownType;
 }
 
@@ -115,9 +154,39 @@ std::wstring TranslateMyDateTo(const std::wstring& value) {
   Date date(value);
 
   // Convert YYYY-MM-DD to MMDDYYYY
-  return PadChar(ToWstr(date.month), '0', 2) +
-         PadChar(ToWstr(date.day), '0', 2) +
-         PadChar(ToWstr(date.year), '0', 4);
+  return PadChar(ToWstr(date.month()), '0', 2) +
+         PadChar(ToWstr(date.day()), '0', 2) +
+         PadChar(ToWstr(date.year()), '0', 4);
+}
+
+std::wstring TranslateMyRating(int value, bool full) {
+  if (!full)
+    return ToWstr(TranslateMyRatingTo(value));
+
+  switch (TranslateMyRatingTo(value)) {
+    case  0: return  L"(0) No Score";
+    case  1: return  L"(1) Appalling";
+    case  2: return  L"(2) Horrible";
+    case  3: return  L"(3) Very Bad";
+    case  4: return  L"(4) Bad";
+    case  5: return  L"(5) Average";
+    case  6: return  L"(6) Fine";
+    case  7: return  L"(7) Good";
+    case  8: return  L"(8) Very Good";
+    case  9: return  L"(9) Great";
+    case 10: return L"(10) Masterpiece";
+  }
+
+  LOGW(L"Invalid value: {}", value);
+  return ToWstr(value);
+}
+
+int TranslateMyRatingFrom(int value) {
+  return value * (anime::kUserScoreMax / 10);
+}
+
+int TranslateMyRatingTo(int value) {
+  return (value * 10) / anime::kUserScoreMax;
 }
 
 int TranslateMyStatusFrom(int value) {
@@ -129,7 +198,7 @@ int TranslateMyStatusFrom(int value) {
     case kPlanToWatch: return anime::kPlanToWatch;
   }
 
-  LOG(LevelWarning, L"Invalid value: " + ToWstr(value));
+  LOGW(L"Invalid value: {}", value);
   return anime::kNotInList;
 }
 
@@ -142,7 +211,7 @@ int TranslateMyStatusTo(int value) {
     case anime::kPlanToWatch: return kPlanToWatch;
   }
 
-  LOG(LevelWarning, L"Invalid value: " + ToWstr(value));
+  LOGW(L"Invalid value: {}", value);
   return kWatching;
 }
 
@@ -189,6 +258,10 @@ void ViewHistory() {
               Settings[taiga::kSync_Service_Mal_Username]);
 }
 
+void ViewLogin() {
+  ExecuteLink(L"https://myanimelist.net/login.php");
+}
+
 void ViewPanel() {
   ExecuteLink(L"https://myanimelist.net/panel.php");
 }
@@ -202,9 +275,9 @@ void ViewUpcomingAnime() {
   Date date = GetDate();
 
   ExecuteLink(L"https://myanimelist.net/anime.php"
-              L"?sd=" + ToWstr(date.day) +
-              L"&sm=" + ToWstr(date.month) +
-              L"&sy=" + ToWstr(date.year) +
+              L"?sd=" + ToWstr(date.day()) +
+              L"&sm=" + ToWstr(date.month()) +
+              L"&sy=" + ToWstr(date.year()) +
               L"&em=0&ed=0&ey=0&o=2&w=&c[]=a&c[]=d&cv=1");
 }
 

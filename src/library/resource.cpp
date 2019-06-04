@@ -1,23 +1,22 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "base/file.h"
-#include "base/foreach.h"
 #include "library/anime.h"
 #include "library/anime_db.h"
 #include "library/anime_util.h"
@@ -85,9 +84,9 @@ bool ImageDatabase::Reload(int anime_id) {
 }
 
 void ImageDatabase::FreeMemory() {
-  foreach_(it, ::AnimeDatabase.items) {
+  for (const auto& pair : ::AnimeDatabase.items) {
     bool erase = true;
-    int anime_id = it->first;
+    int anime_id = pair.first;
 
     if (items_.find(anime_id) == items_.end())
       continue;
@@ -110,7 +109,7 @@ void ImageDatabase::FreeMemory() {
 void ImageDatabase::Clear() {
   items_.clear();
 
-  std::wstring path = taiga::GetPath(taiga::kPathDatabaseImage);
+  std::wstring path = taiga::GetPath(taiga::Path::DatabaseImage);
   DeleteFolder(path);
 }
 

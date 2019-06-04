@@ -1,23 +1,22 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef TAIGA_LIBRARY_HISTORY_H
-#define TAIGA_LIBRARY_HISTORY_H
+#pragma once
 
 #include <string>
 #include <queue>
@@ -28,15 +27,16 @@
 #include "base/xml.h"
 #include "library/anime_episode.h"
 
-enum QueueSearchMode {
-  kQueueSearchDateStart = 1,
-  kQueueSearchDateEnd,
-  kQueueSearchEpisode,
-  kQueueSearchRewatchedTimes,
-  kQueueSearchRewatching,
-  kQueueSearchScore,
-  kQueueSearchStatus,
-  kQueueSearchTags
+enum class QueueSearch {
+  DateStart,
+  DateEnd,
+  Episode,
+  Notes,
+  RewatchedTimes,
+  Rewatching,
+  Score,
+  Status,
+  Tags,
 };
 
 class AnimeValues {
@@ -49,6 +49,7 @@ public:
   Optional<int> enable_rewatching;
   Optional<int> rewatched_times;
   Optional<std::wstring> tags;
+  Optional<std::wstring> notes;
 };
 
 class HistoryItem : public AnimeValues {
@@ -73,7 +74,9 @@ public:
   void Add(HistoryItem& item, bool save = true);
   void Check(bool automatic = true);
   void Clear(bool save = true);
-  HistoryItem* FindItem(int anime_id, int search_mode = 0);
+  void Merge(bool save = true);
+  bool IsQueued(int anime_id) const;
+  HistoryItem* FindItem(int anime_id, QueueSearch search_mode);
   HistoryItem* GetCurrentItem();
   int GetItemCount();
   void Remove(int index = -1, bool save = true, bool refresh = true, bool to_history = true);
@@ -93,6 +96,8 @@ public:
   void Clear(bool save = true);
   bool Load();
   bool Save();
+
+  void HandleCompatibility(const std::wstring& meta_version);
 
   std::vector<HistoryItem> items;
   HistoryQueue queue;
@@ -121,5 +126,3 @@ private:
 
 extern class History History;
 extern class ConfirmationQueue ConfirmationQueue;
-
-#endif  // TAIGA_LIBRARY_HISTORY_H

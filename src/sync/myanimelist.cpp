@@ -1,17 +1,17 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -19,7 +19,6 @@
 #include <set>
 
 #include "base/base64.h"
-#include "base/foreach.h"
 #include "base/html.h"
 #include "base/http.h"
 #include "base/string.h"
@@ -46,9 +45,7 @@ Service::Service() {
 
 void Service::BuildRequest(Request& request, HttpRequest& http_request) {
   http_request.url.host = host_;
-
-  if (Settings.GetBool(taiga::kSync_Service_Mal_UseHttps))
-    http_request.url.protocol = base::http::kHttps;
+  http_request.url.protocol = base::http::Protocol::Https;
 
   // This doesn't quite help; MAL returns whatever it pleases
   http_request.header[L"Accept"] = L"text/xml, text/*";
@@ -165,7 +162,7 @@ void Service::UpdateLibraryEntry(Request& request, HttpRequest& http_request) {
 
   // MAL allows setting a new value to "times_rewatched" and others, but
   // there's no way to get the current value. So we avoid them altogether.
-  const wchar_t* tags[] = {
+  const std::set<std::wstring> valid_tags{
       L"episode",
       L"status",
       L"score",
@@ -183,12 +180,13 @@ void Service::UpdateLibraryEntry(Request& request, HttpRequest& http_request) {
 //    L"fansub_group",
       L"tags"
   };
-  std::set<std::wstring> valid_tags(tags, tags + sizeof(tags) / sizeof(*tags));
-  foreach_(it, request.data) {
-    auto tag = valid_tags.find(TranslateKeyTo(it->first));
+  for (const auto& pair : request.data) {
+    auto tag = valid_tags.find(TranslateKeyTo(pair.first));
     if (tag != valid_tags.end()) {
-      std::wstring value = it->second;
-      if (*tag == L"status") {
+      std::wstring value = pair.second;
+      if (*tag == L"score") {
+        value = ToWstr(TranslateMyRatingTo(ToInt(value)));
+      } else if (*tag == L"status") {
         value = ToWstr(TranslateMyStatusTo(ToInt(value)));
       } else if (StartsWith(*tag, L"date")) {
         value = TranslateMyDateTo(value);
@@ -204,13 +202,13 @@ void Service::UpdateLibraryEntry(Request& request, HttpRequest& http_request) {
 // Response handlers
 
 void Service::AuthenticateUser(Response& response, HttpResponse& http_response) {
-  response.data[canonical_name_ + L"-username"] =
-      InStr(http_response.body, L"<username>", L"</username>");
+  user_.id = InStr(http_response.body, L"<id>", L"</id>");
+  user_.username = InStr(http_response.body, L"<username>", L"</username>");
 }
 
 void Service::GetLibraryEntries(Response& response, HttpResponse& http_response) {
   xml_document document;
-  xml_parse_result parse_result = document.load(http_response.body.c_str());
+  xml_parse_result parse_result = document.load_string(http_response.body.c_str());
 
   if (parse_result.status != pugi::status_ok) {
     response.data[L"error"] = L"Could not parse the list";
@@ -275,7 +273,7 @@ void Service::GetLibraryEntries(Response& response, HttpResponse& http_response)
     anime_item.SetMyLastWatchedEpisode(XmlReadIntValue(node, L"my_watched_episodes"));
     anime_item.SetMyDateStart(XmlReadStrValue(node, L"my_start_date"));
     anime_item.SetMyDateEnd(XmlReadStrValue(node, L"my_finish_date"));
-    anime_item.SetMyScore(XmlReadIntValue(node, L"my_score"));
+    anime_item.SetMyScore(TranslateMyRatingFrom(XmlReadIntValue(node, L"my_score")));
     anime_item.SetMyStatus(TranslateMyStatusFrom(XmlReadIntValue(node, L"my_status")));
     anime_item.SetMyRewatching(XmlReadIntValue(node, L"my_rewatching"));
     anime_item.SetMyRewatchingEp(XmlReadIntValue(node, L"my_rewatching_ep"));
@@ -318,6 +316,7 @@ void Service::GetMetadataById(Response& response, HttpResponse& http_response) {
 
   bool title_is_truncated = false;
 
+  title = DecodeText(title);
   if (EndsWith(title, L")") && title.length() > 7)
     title = title.substr(0, title.length() - 7);
   if (EndsWith(title, L"...") && title.length() > 3) {
@@ -353,7 +352,7 @@ void Service::GetMetadataById(Response& response, HttpResponse& http_response) {
 
 void Service::SearchTitle(Response& response, HttpResponse& http_response) {
   xml_document document;
-  xml_parse_result parse_result = document.load(http_response.body.c_str());
+  xml_parse_result parse_result = document.load_string(http_response.body.c_str());
 
   if (parse_result.status != pugi::status_ok) {
     response.data[L"error"] = L"Could not parse search results";
@@ -445,12 +444,35 @@ bool Service::RequestSucceeded(Response& response,
     return false;
   }
 
+  // Website login required
+  if (http_response.code == 403) {
+    // Users that haven't logged in to MAL in the past 90 days are required to
+    // do so and clear the captcha first.
+    if (InStr(http_response.body, L"Website login required") > -1) {
+      response.data[L"error"] = http_response.body;
+      response.data[L"website_login_required"] = L"true";
+      HandleError(http_response, response);
+      return false;
+    }
+  }
+
   // Not approved
   // TODO: Remove when MAL fixes its API
   if (http_response.code == 400) {
     if (InStr(http_response.body, L"This anime has not been approved yet") > -1) {
       response.data[L"error"] = http_response.body;
       response.data[L"not_approved"] = L"true";
+      return false;
+    }
+  }
+
+  // API is down
+  // See: https://github.com/erengy/taiga/issues/588
+  if (http_response.code == 404) {
+    if (InStr(http_response.body, L"<title>404 Not Found</title>") > -1) {
+      response.data[L"error"] =
+          L"API is unavailable. Please contact MyAnimeList's customer service.";
+      HandleError(http_response, response);
       return false;
     }
   }
@@ -466,6 +488,12 @@ bool Service::RequestSucceeded(Response& response,
       // ...but it returned some HTML code instead. We're keeping these lines in
       // case MAL suddenly reverts to the old behavior.
       if (InStr(http_response.body, L"<title>201 Created</title>") > -1)
+        return true;
+      // If we try to add an anime that is already in user's list, MyAnimeList
+      // returns a "400 Bad Request" response with "The anime (id: 12345) is
+      // already in the list." error message. Here we ignore this error and
+      // assume that our request succeeded.
+      if (InStr(http_response.body, L"is already in the list") > -1)
         return true;
       break;
     case kAuthenticateUser:
@@ -501,6 +529,9 @@ bool Service::RequestSucceeded(Response& response,
 
   // Set the error message on failure
   switch (response.type) {
+    case kAuthenticateUser:
+      response.data[L"error"] = http_response.body;
+      break;
     case kAddLibraryEntry:
     case kDeleteLibraryEntry:
     case kUpdateLibraryEntry: {
@@ -510,13 +541,9 @@ bool Service::RequestSucceeded(Response& response,
       response.data[L"error"] = error_message;
       break;
     }
-    default:
-      response.data[L"error"] += L"Unknown error (" +
-          canonical_name() + L"|" +
-          ToWstr(response.type) + L"|" +
-          ToWstr(http_response.code) + L")";
-      break;
   }
+
+  HandleError(http_response, response);
 
   return false;
 }

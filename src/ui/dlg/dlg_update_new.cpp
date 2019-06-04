@@ -1,22 +1,21 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "base/foreach.h"
 #include "base/gfx.h"
 #include "base/string.h"
 #include "taiga/resource.h"
@@ -41,7 +40,7 @@ BOOL NewUpdateDialog::OnInitDialog() {
                  L"A new version of " TAIGA_APP_NAME L" is available!");
 
   // Set details text
-  std::wstring text = L"Current version: " + std::wstring(Taiga.version);
+  std::wstring text = L"Current version: " + StrToWstr(Taiga.version.to_string());
   SetDlgItemText(IDC_STATIC_UPDATE_DETAILS, text.c_str());
 
   // Set changelog text
@@ -51,11 +50,11 @@ BOOL NewUpdateDialog::OnInitDialog() {
       L"{\\f0 Segoe UI;}"
       L"}"
       L"\\deflang1024\\fs18";
-  foreach_(item, Taiga.Updater.items) {
-    base::SemanticVersion item_version(item->guid);
+  for (const auto& item : Taiga.Updater.items) {
+    semaver::Version item_version(WstrToStr(item.guid));
     if (item_version > Taiga.version) {
-      changelog += L"\\b Version " + item->guid + L"\\b0\\line ";
-      std::wstring description = item->description;
+      changelog += L"\\b Version " + item.guid + L"\\b0\\line ";
+      std::wstring description = item.description;
       ReplaceString(description, L"\n", L"\\line ");
       changelog += description + L"\\line\\line ";
     }

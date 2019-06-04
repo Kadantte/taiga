@@ -1,17 +1,17 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -28,7 +28,7 @@ DirectoryChangeNotification::DirectoryChangeNotification(
     : action(action),
       filename(std::make_pair(filename, L"")),
       path(path),
-      type(kTypeUnknown) {
+      type(Type::Unknown) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -38,7 +38,7 @@ DirectoryChangeEntry::DirectoryChangeEntry(HANDLE directory_handle,
     : bytes_returned_(0),
       directory_handle_(directory_handle),
       path(path),
-      state(kStateStopped) {
+      state(State::Stopped) {
   buffer_.resize(65536);
   ZeroMemory(&overlapped_, sizeof(overlapped_));
 }
@@ -169,11 +169,11 @@ void DirectoryMonitor::MonitorProc() {
     if (entry && number_of_bytes > 0) {
       win::Lock lock(critical_section_);
       switch (entry->state) {
-        case DirectoryChangeEntry::kStateStopped: {
+        case DirectoryChangeEntry::State::Stopped: {
           HandleStoppedState(*entry);
           break;
         }
-        case DirectoryChangeEntry::kStateActive: {
+        case DirectoryChangeEntry::State::Active: {
           HandleActiveState(*entry);
           break;
         }
@@ -181,13 +181,13 @@ void DirectoryMonitor::MonitorProc() {
     }
   } while (entry);
 
-  LOG(LevelDebug, L"Stopped monitoring.");
+  LOGD(L"Stopped monitoring.");
 }
 
 void DirectoryMonitor::HandleStoppedState(DirectoryChangeEntry& entry) {
   if (ReadDirectoryChanges(entry)) {
-    entry.state = DirectoryChangeEntry::kStateActive;
-    LOG(LevelDebug, L"Started monitoring: " + entry.path);
+    entry.state = DirectoryChangeEntry::State::Active;
+    LOGD(L"Started monitoring: {}", entry.path);
   }
 }
 
@@ -224,17 +224,14 @@ static void LogFileAction(const DirectoryChangeEntry& entry,
                           const DirectoryChangeNotification& notification) {
   switch (notification.action) {
     case FILE_ACTION_ADDED:
-      LOG(LevelDebug,
-          L"Added: " + entry.path + notification.filename.first);
+      LOGD(L"Added: {}{}", entry.path, notification.filename.first);
       break;
     case FILE_ACTION_REMOVED:
-      LOG(LevelDebug,
-          L"Removed: " + entry.path + notification.filename.first);
+      LOGD(L"Removed: {}{}", entry.path, notification.filename.first);
       break;
     case FILE_ACTION_RENAMED_NEW_NAME:
-      LOG(LevelDebug,
-          L"Renamed (old): " + entry.path + notification.filename.second + L"\n"
-          L"Renamed (new): " + entry.path + notification.filename.first);
+      LOGD(L"Renamed (old): {0}{1}\nRenamed (new): {0}{2}", entry.path,
+           notification.filename.second, notification.filename.first);
       break;
   }
 }
@@ -260,13 +257,13 @@ void DirectoryMonitor::Callback(DirectoryChangeEntry& entry) {
     if (notification.action != FILE_ACTION_REMOVED) {
       std::wstring path = entry.path + notification.filename.first;
       notification.type = FolderExists(path) ?
-          DirectoryChangeNotification::kTypeDirectory :
-          DirectoryChangeNotification::kTypeFile;
+          DirectoryChangeNotification::Type::Directory :
+          DirectoryChangeNotification::Type::File;
     } else {
       std::wstring extension = GetFileExtension(notification.filename.first);
       notification.type = !ValidateFileExtension(extension, 4) ?
-          DirectoryChangeNotification::kTypeDirectory :
-          DirectoryChangeNotification::kTypeFile;
+          DirectoryChangeNotification::Type::Directory :
+          DirectoryChangeNotification::Type::File;
     }
 
     LogFileAction(entry, notification);

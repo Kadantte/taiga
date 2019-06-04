@@ -1,23 +1,22 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "file.h"
-#include "foreach.h"
 #include "string.h"
 #include "xml.h"
 
@@ -56,9 +55,9 @@ void XmlWriteChildNodes(pugi::xml_node& parent_node,
                         const std::vector<std::wstring>& input,
                         const wchar_t* name,
                         pugi::xml_node_type node_type) {
-  foreach_(it, input) {
+  for (const auto& value : input) {
     xml_node child_node = parent_node.append_child(name);
-    child_node.append_child(node_type).set_value(it->c_str());
+    child_node.append_child(node_type).set_value(value.c_str());
   }
 }
 

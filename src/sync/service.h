@@ -1,23 +1,22 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef TAIGA_SYNC_SERVICE_H
-#define TAIGA_SYNC_SERVICE_H
+#pragma once
 
 #include "base/types.h"
 
@@ -33,14 +32,17 @@ enum ServiceId {
   kTaiga = 0,
   kFirstService = 1,
   kMyAnimeList = 1,
-  kHummingbird = 2,
-  kLastService = 2
+  kKitsu = 2,
+  kAniList = 3,
+  kLastService = 3
 };
 
 enum RequestType {
   kGenericRequest,
   kAuthenticateUser,
+  kGetUser,
   kGetMetadataById,
+  kGetSeason,
   kSearchTitle,
   kAddLibraryEntry,
   kDeleteLibraryEntry,
@@ -69,10 +71,19 @@ public:
   dictionary_t data;
 };
 
-class User {
-public:
+struct User {
   string_t id;
   string_t username;
+  string_t rating_system;
+
+  string_t access_token;
+  bool authenticated = false;
+  time_t last_synchronized = 0;
+};
+
+struct Rating {
+  int value = 0;
+  std::wstring text;
 };
 
 class Service {
@@ -89,7 +100,12 @@ public:
   const string_t& canonical_name() const;
   const string_t& name() const;
 
+  User& user();
+  const User& user() const;
+
 protected:
+  void HandleError(const HttpResponse& http_response, Response& response) const;
+
   // API end-point
   string_t host_;
   // Service identifiers
@@ -112,5 +128,3 @@ protected:
     case type: function(response, http_response); break;
 
 }  // namespace sync
-
-#endif  // TAIGA_SYNC_SERVICE_H

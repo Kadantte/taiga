@@ -1,22 +1,25 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "list.h"
+
+#include <windows/win/common_controls.h>
+#include <windows/win/gdi.h>
 
 #include "base/comparable.h"
 #include "base/string.h"
@@ -26,9 +29,7 @@
 #include "library/anime_util.h"
 #include "sync/service.h"
 #include "taiga/settings.h"
-
-#include "win/ctrl/win_ctrl.h"
-#include "win/win_gdi.h"
+#include "track/feed.h"
 
 namespace ui {
 
@@ -67,56 +68,6 @@ int SortAsEpisodeRange(const std::wstring& str1, const std::wstring& str2) {
   }
 }
 
-int SortAsFileSize(LPCWSTR str1, LPCWSTR str2) {
-  UINT64 size[2] = {1, 1};
-
-  for (size_t i = 0; i < 2; i++) {
-    std::wstring value = i == 0 ? str1 : str2;
-    std::wstring unit;
-
-    TrimRight(value, L".\r");
-    EraseChars(value, L" ");
-
-    if (value.length() >= 2) {
-      for (auto it = value.rbegin(); it != value.rend(); ++it) {
-        if (IsNumericChar(*it))
-          break;
-        unit.insert(unit.begin(), *it);
-      }
-      value.resize(value.length() - unit.length());
-      Trim(unit);
-    }
-
-    int index = InStr(value, L".");
-    if (index > -1) {
-      int length = value.substr(index + 1).length();
-      if (length <= 2)
-        value.append(2 - length, '0');
-      EraseChars(value, L".");
-    } else {
-      value.append(2, '0');
-    }
-
-    if (IsEqual(unit, L"KB")) {
-      size[i] *= 1000;
-    } else if (IsEqual(unit, L"KiB")) {
-      size[i] *= 1024;
-    } else if (IsEqual(unit, L"MB")) {
-      size[i] *= 1000 * 1000;
-    } else if (IsEqual(unit, L"MiB")) {
-      size[i] *= 1024 * 1024;
-    } else if (IsEqual(unit, L"GB")) {
-      size[i] *= 1000 * 1000 * 1000;
-    } else if (IsEqual(unit, L"GiB")) {
-      size[i] *= 1024 * 1024 * 1024;
-    }
-
-    size[i] *= _wtoi(value.c_str());
-  }
-
-  return CompareValues<UINT64>(size[0], size[1]);
-}
-
 int SortAsNumber(LPCWSTR str1, LPCWSTR str2) {
   return CompareValues<int>(ToInt(str1), ToInt(str2));
 }
@@ -135,23 +86,40 @@ int SortListByAiringStatus(const anime::Item& item1, const anime::Item& item2) {
   return CompareValues<int>(item1.GetAiringStatus(), item2.GetAiringStatus());
 }
 
+int SortListByMyDate(const Date& date1, const Date& date2) {
+  if (date1 != date2)
+    if (!anime::IsValidDate(date1) || !anime::IsValidDate(date2))
+      return anime::IsValidDate(date2) ? base::kLessThan : base::kGreaterThan;
+
+  return CompareValues<Date>(date1, date2);
+}
+
+int SortListByMyDateStart(const anime::Item& item1, const anime::Item& item2) {
+  return SortListByMyDate(item1.GetMyDateStart(), item2.GetMyDateStart());
+}
+
+int SortListByMyDateCompleted(const anime::Item& item1, const anime::Item& item2) {
+  return SortListByMyDate(item1.GetMyDateEnd(), item2.GetMyDateEnd());
+}
+
 int SortListByDateStart(const anime::Item& item1, const anime::Item& item2) {
   Date date1 = item1.GetDateStart();
   Date date2 = item2.GetDateStart();
 
+  auto assume_worst_case = [](Date& date) {
+    // Hello.
+    // We come from the future.
+    if (!date.year())
+      date.set_year(static_cast<decltype(date.year())>(-1));
+    if (!date.month())
+      date.set_month(12);
+    if (!date.day())
+      date.set_day(31);
+  };
+
   if (date1 != date2) {
-    if (!date1.year)
-      date1.year = static_cast<unsigned short>(-1);  // Hello.
-    if (!date2.year)
-      date2.year = static_cast<unsigned short>(-1);  // We come from the future.
-    if (!date1.month)
-      date1.month = 12;
-    if (!date2.month)
-      date2.month = 12;
-    if (!date1.day)
-      date1.day = 31;
-    if (!date2.day)
-      date2.day = 31;
+    assume_worst_case(date1);
+    assume_worst_case(date2);
   }
 
   return CompareValues<Date>(date1, date2);
@@ -162,8 +130,8 @@ int SortListByEpisodeCount(const anime::Item& item1, const anime::Item& item2) {
 }
 
 int SortListByLastUpdated(const anime::Item& item1, const anime::Item& item2) {
-  return CompareValues<time_t>(_wtoi64(item1.GetMyLastUpdated().c_str()),
-                               _wtoi64(item2.GetMyLastUpdated().c_str()));
+  return CompareValues<time_t>(ToTime(item1.GetMyLastUpdated()),
+                               ToTime(item2.GetMyLastUpdated()));
 }
 
 int SortListByPopularity(const anime::Item& item1, const anime::Item& item2) {
@@ -200,26 +168,13 @@ int SortListByScore(const anime::Item& item1, const anime::Item& item2) {
 }
 
 int SortListByTitle(const anime::Item& item1, const anime::Item& item2) {
-  if (Settings.GetBool(taiga::kApp_List_DisplayEnglishTitles)) {
-    return CompareStrings(item1.GetEnglishTitle(true),
-                          item2.GetEnglishTitle(true));
-  } else {
-    return CompareStrings(item1.GetTitle(), item2.GetTitle());
-  }
+  return CompareStrings(anime::GetPreferredTitle(item1),
+                        anime::GetPreferredTitle(item2));
 }
 
-int SortListBySeason(const anime::Item& item1, const anime::Item& item2,
-                     int order) {
-  anime::Season season1(item1.GetDateStart());
-  anime::Season season2(item2.GetDateStart());
-
-  if (season1 != season2)
-    return CompareValues<anime::Season>(season1, season2);
-
-  if (item1.GetAiringStatus() != item2.GetAiringStatus())
-    return SortListByAiringStatus(item1, item2);
-
-  return SortListByTitle(item1, item2) * order;
+int SortListBySeason(const anime::Item& item1, const anime::Item& item2) {
+  return CompareValues<anime::Season>(anime::Season{item1.GetDateStart()},
+                                      anime::Season{item2.GetDateStart()});
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -231,8 +186,6 @@ int SortList(int type, LPCWSTR str1, LPCWSTR str2) {
       return SortAsText(str1, str2);
     case kListSortEpisodeRange:
       return SortAsEpisodeRange(str1, str2);
-    case kListSortFileSize:
-      return SortAsFileSize(str1, str2);
     case kListSortNumber:
       return SortAsNumber(str1, str2);
     case kListSortRfc822DateTime:
@@ -248,6 +201,10 @@ int SortList(int type, int order, int id1, int id2) {
 
   if (item1 && item2) {
     switch (type) {
+      case kListSortMyDateStart:
+        return SortListByMyDateStart(*item1, *item2);
+      case kListSortMyDateCompleted:
+        return SortListByMyDateCompleted(*item1, *item2);
       case kListSortDateStart:
         return SortListByDateStart(*item1, *item2);
       case kListSortEpisodeCount:
@@ -263,7 +220,7 @@ int SortList(int type, int order, int id1, int id2) {
       case kListSortScore:
         return SortListByScore(*item1, *item2);
       case kListSortSeason:
-        return SortListBySeason(*item1, *item2, order);
+        return SortListBySeason(*item1, *item2);
       case kListSortStatus:
         return SortListByAiringStatus(*item1, *item2);
       case kListSortTitle:
@@ -276,29 +233,38 @@ int SortList(int type, int order, int id1, int id2) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-int CALLBACK ListViewCompareProc(LPARAM lParam1, LPARAM lParam2,
-                                 LPARAM lParamSort) {
+static int ListViewCompare(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort,
+                           bool secondary) {
   if (!lParamSort)
     return base::kEqualTo;
 
-  win::ListView* list = reinterpret_cast<win::ListView*>(lParamSort);
+  const auto list = reinterpret_cast<win::ListView*>(lParamSort);
   int return_value = base::kEqualTo;
 
-  switch (list->GetSortType()) {
+  switch (list->GetSortType(secondary)) {
     case kListSortDefault:
     case kListSortEpisodeRange:
-    case kListSortFileSize:
     case kListSortNumber:
     case kListSortRfc822DateTime:
     default: {
       WCHAR str1[MAX_PATH];
       WCHAR str2[MAX_PATH];
-      list->GetItemText(lParam1, list->GetSortColumn(), str1);
-      list->GetItemText(lParam2, list->GetSortColumn(), str2);
-      return_value = SortList(list->GetSortType(), str1, str2);
+      list->GetItemText(lParam1, list->GetSortColumn(secondary), str1);
+      list->GetItemText(lParam2, list->GetSortColumn(secondary), str2);
+      return_value = SortList(list->GetSortType(secondary), str1, str2);
       break;
     }
 
+    case kListSortFileSize: {
+      const auto item1 = reinterpret_cast<FeedItem*>(list->GetItemParam(lParam1));
+      const auto item2 = reinterpret_cast<FeedItem*>(list->GetItemParam(lParam2));
+      if (item1 && item2)
+        return_value = CompareValues<UINT64>(item1->file_size, item2->file_size);
+      break;
+    }
+
+    case kListSortMyDateCompleted:
+    case kListSortMyDateStart:
     case kListSortDateStart:
     case kListSortEpisodeCount:
     case kListSortLastUpdated:
@@ -309,22 +275,33 @@ int CALLBACK ListViewCompareProc(LPARAM lParam1, LPARAM lParam2,
     case kListSortSeason:
     case kListSortStatus:
     case kListSortTitle: {
-      return_value = SortList(list->GetSortType(), list->GetSortOrder(),
+      return_value = SortList(list->GetSortType(secondary),
+                              list->GetSortOrder(secondary),
                               static_cast<int>(list->GetItemParam(lParam1)),
                               static_cast<int>(list->GetItemParam(lParam2)));
       break;
     }
   }
 
-  return return_value * list->GetSortOrder();
+  if (!secondary && return_value == base::kEqualTo) {
+    if (list->GetSortColumn(false) != list->GetSortColumn(true)) {
+      return ListViewCompare(lParam1, lParam2, lParamSort, true);
+    }
+  }
+
+  return return_value * list->GetSortOrder(secondary);
 }
 
+int CALLBACK ListViewCompareProc(LPARAM lParam1, LPARAM lParam2,
+                                 LPARAM lParamSort) {
+  return ListViewCompare(lParam1, lParam2, lParamSort, false);
+}
 
 int CALLBACK AnimeListCompareProc(LPARAM lParam1, LPARAM lParam2,
                                   LPARAM lParamSort) {
   if (Settings.GetBool(taiga::kApp_List_HighlightNewEpisodes) &&
       Settings.GetBool(taiga::kApp_List_DisplayHighlightedOnTop)) {
-    win::ListView* list = reinterpret_cast<win::ListView*>(lParamSort);
+    const auto list = reinterpret_cast<win::ListView*>(lParamSort);
     auto item1 = AnimeDatabase.FindItem(list->GetItemParam(lParam1));
     auto item2 = AnimeDatabase.FindItem(list->GetItemParam(lParam2));
     if (item1 && item2) {
@@ -335,7 +312,7 @@ int CALLBACK AnimeListCompareProc(LPARAM lParam1, LPARAM lParam2,
     }
   }
 
-  return ListViewCompareProc(lParam1, lParam2, lParamSort);
+  return ListViewCompare(lParam1, lParam2, lParamSort, false);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

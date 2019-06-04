@@ -1,17 +1,17 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -237,7 +237,7 @@ bool IntersectsWith(const std::wstring& str1, const std::wstring& str2) {
   if (str1.empty() || str2.empty())
     return false;
 
-  return min(str1.size(), str2.size()) ==
+  return std::min(str1.size(), str2.size()) ==
          LongestCommonSubsequenceLength(str1, str2);
 }
 
@@ -268,7 +268,7 @@ size_t LongestCommonSubsequenceLength(const wstring& str1,
       if (str1[i] == str2[j]) {
         table[i + 1][j + 1] = table[i][j] + 1;
       } else {
-        table[i + 1][j + 1] = max(table[i + 1][j], table[i][j + 1]);
+        table[i + 1][j + 1] = std::max(table[i + 1][j], table[i][j + 1]);
       }
     }
   }
@@ -325,9 +325,9 @@ double JaroWinklerDistance(const wstring& str1, const wstring& str2) {
   vector<int> sflags(len1), aflags(len2);
 
   // Calculate matching characters
-  int range = max(0, (max(len1, len2) / 2) - 1);
+  int range = std::max(0, (std::max(len1, len2) / 2) - 1);
   for (i = 0; i < len2; i++) {
-    for (j = max(i - range, 0), l = min(i + range + 1, len1); j < l; j++) {
+    for (j = std::max(i - range, 0), l = std::min(i + range + 1, len1); j < l; j++) {
       if (str2[i] == str1[j] && !sflags[j]) {
         sflags[j] = 1;
         aflags[i] = 1;
@@ -362,7 +362,7 @@ double JaroWinklerDistance(const wstring& str1, const wstring& str2) {
 
   // Calculate common string prefix up to 4 chars
   l = 0;
-  for (i = 0; i < min(min(len1, len2), 4); i++)
+  for (i = 0; i < std::min(std::min(len1, len2), 4); i++)
     if (str1[i] == str2[i])
         l++;
 
@@ -387,13 +387,13 @@ double LevenshteinDistance(const wstring& str1, const wstring& str2) {
     col[0] = i + 1;
 
     for (size_t j = 0; j < len2; j++)
-      col[j + 1] = min(min(1 + col[j], 1 + prev_col[1 + j]),
-                       prev_col[j] + (str1[i] == str2[j] ? 0 : 1));
+      col[j + 1] = std::min(std::min(1 + col[j], 1 + prev_col[1 + j]),
+                            prev_col[j] + (str1[i] == str2[j] ? 0 : 1));
 
     col.swap(prev_col);
   }
 
-  const double len = static_cast<double>(max(str1.size(), str2.size()));
+  const double len = static_cast<double>(std::max(str1.size(), str2.size()));
   return 1.0 - (prev_col[len2] / len);
 }
 
@@ -431,7 +431,7 @@ double CompareTrigrams(const trigram_container_t& t1,
                         std::back_inserter(intersection));
 
   return static_cast<double>(intersection.size()) /
-         static_cast<double>(max(t1.size(), t2.size()));
+         static_cast<double>(std::max(t1.size(), t2.size()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -463,7 +463,6 @@ void ReplaceChars(wstring& str, const wchar_t chars[],
       str.replace(pos, 1, replace_with);
   } while (pos != wstring::npos);
 }
-
 
 bool ReplaceString(wstring& str,
                    size_t offset,
@@ -620,8 +619,9 @@ std::locale current_locale("");
 void ToLower(wstring& str, bool use_locale) {
   if (use_locale) {
     std::transform(str.begin(), str.end(), str.begin(),
-                   std::bind2nd(std::ptr_fun(&std::tolower<wchar_t>),
-                                current_locale));
+        [](const wchar_t c) {
+          return std::tolower(c, current_locale);
+        });
   } else {
     std::transform(str.begin(), str.end(), str.begin(), towlower);
   }
@@ -635,8 +635,9 @@ wstring ToLower_Copy(wstring str, bool use_locale) {
 void ToUpper(wstring& str, bool use_locale) {
   if (use_locale) {
     std::transform(str.begin(), str.end(), str.begin(),
-                   std::bind2nd(std::ptr_fun(&std::toupper<wchar_t>),
-                                current_locale));
+        [](const wchar_t c) {
+          return std::toupper(c, current_locale);
+        });
   } else {
     std::transform(str.begin(), str.end(), str.begin(), towupper);
   }
@@ -659,6 +660,10 @@ bool ToBool(const wstring& str) {
   return (c == '1' || c == 't' || c == 'T' || c == 'y' || c == 'Y');
 }
 
+double ToDouble(const string& str) {
+  return atof(str.c_str());
+}
+
 double ToDouble(const wstring& str) {
   return _wtof(str.c_str());
 }
@@ -669,6 +674,22 @@ int ToInt(const string& str) {
 
 int ToInt(const wstring& str) {
   return _wtoi(str.c_str());
+}
+
+UINT64 ToUint64(const std::string& str) {
+  return std::stoull(str.c_str(), nullptr, 10);
+}
+
+UINT64 ToUint64(const std::wstring& str) {
+  return std::wcstoull(str.c_str(), nullptr, 10);
+}
+
+time_t ToTime(const std::string& str) {
+  return _atoi64(str.c_str());
+}
+
+time_t ToTime(const std::wstring& str) {
+  return _wtoi64(str.c_str());
 }
 
 string ToStr(const INT& value) {
@@ -689,6 +710,12 @@ wstring ToWstr(const UINT& value) {
   return wstring(buffer);
 }
 
+wstring ToWstr(const ULONG& value) {
+  wchar_t buffer[65];
+  _ultow_s(value, buffer, 65, 10);
+  return wstring(buffer);
+}
+
 wstring ToWstr(const INT64& value) {
   wchar_t buffer[65];
   _i64tow_s(value, buffer, 65, 10);
@@ -699,6 +726,12 @@ wstring ToWstr(const UINT64& value) {
   wchar_t buffer[65];
   _ui64tow_s(value, buffer, 65, 10);
   return wstring(buffer);
+}
+
+string ToStr(const double& value, int count) {
+  std::ostringstream out;
+  out << std::fixed << std::setprecision(count) << value;
+  return out.str();
 }
 
 wstring ToWstr(const double& value, int count) {
@@ -767,6 +800,10 @@ wstring AddTrailingSlash(const wstring& str) {
   }
 }
 
+void RemoveTrailingSlash(wstring& str) {
+  TrimRight(str, L"/\\");
+}
+
 wstring GetFileExtension(const wstring& str) {
   return str.substr(str.find_last_of(L".") + 1);
 }
@@ -829,16 +866,4 @@ wstring PushString(const wstring& str1, const wstring& str2) {
   } else {
     return str1 + str2;
   }
-}
-
-void ReadStringFromResource(LPCWSTR name, LPCWSTR type, wstring& output) {
-  HRSRC hResInfo = FindResource(nullptr, name,  type);
-  HGLOBAL hResHandle = LoadResource(nullptr, hResInfo);
-  DWORD dwSize = SizeofResource(nullptr, hResInfo);
-
-  const char* lpData = static_cast<char*>(LockResource(hResHandle));
-  string temp(lpData, dwSize);
-  output = StrToWstr(temp);
-
-  FreeResource(hResInfo);
 }

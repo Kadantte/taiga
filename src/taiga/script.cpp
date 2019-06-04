@@ -1,17 +1,17 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -23,13 +23,15 @@
 #include "library/anime_db.h"
 #include "library/anime_episode.h"
 #include "library/anime_util.h"
-#include "sync/hummingbird_util.h"
+#include "sync/anilist_util.h"
+#include "sync/kitsu_util.h"
 #include "sync/myanimelist_util.h"
 #include "sync/sync.h"
 #include "taiga/dummy.h"
 #include "taiga/script.h"
 #include "taiga/settings.h"
 #include "taiga/taiga.h"
+#include "track/media.h"
 #include "ui/ui.h"
 
 // The idea behind Taiga's script functions is borrowed from Mp3tag, which
@@ -77,6 +79,7 @@ static const std::set<std::wstring> script_variables = {
   L"resolution",
   L"rewatching",
   L"score",
+  L"season",
   L"status",
   L"title",
   L"total",
@@ -369,10 +372,11 @@ std::wstring ReplaceVariables(std::wstring str, const anime::Episode& episode,
       if (pos_end > -1) {
         std::wstring var = str.substr(pos_var + 1, pos_end - pos_var - 1);
         if (IsScriptVariable(var)) {
-          REPLACE(L"title", VALIDATE(ENCODE(anime_item->GetTitle()), ENCODE(episode.anime_title())));
+          REPLACE(L"title", VALIDATE(ENCODE(anime::GetPreferredTitle(*anime_item)), ENCODE(episode.anime_title())));
           REPLACE(L"watched", VALIDATE(ENCODE(anime::TranslateNumber(anime_item->GetMyLastWatchedEpisode(), L"")), L""));
           REPLACE(L"total", VALIDATE(ENCODE(anime::TranslateNumber(anime_item->GetEpisodeCount(), L"")), L""));
           REPLACE(L"score", VALIDATE(ENCODE(anime::TranslateMyScore(anime_item->GetMyScore(), L"")), L""));
+          REPLACE(L"season", VALIDATE(ENCODE(anime::TranslateDateToSeasonString(anime_item->GetDateStart())), L""));
           REPLACE(L"id", ENCODE(id));
           REPLACE(L"image", VALIDATE(ENCODE(anime_item->GetImageUrl()), L""));
           REPLACE(L"status", VALIDATE(ENCODE(ToWstr(anime_item->GetMyStatus())), L""));
@@ -389,17 +393,20 @@ std::wstring ReplaceVariables(std::wstring str, const anime::Episode& episode,
           REPLACE(L"folder", ENCODE(folder));
           REPLACE(L"user", ENCODE(taiga::GetCurrentUsername()));
           REPLACE(L"manual", is_manual ? L"true" : L"");
-          switch (Taiga.play_status) {
-            case taiga::kPlayStatusStopped: REPLACE(L"playstatus", L"stopped"); break;
-            case taiga::kPlayStatusPlaying: REPLACE(L"playstatus", L"playing"); break;
-            case taiga::kPlayStatusUpdated: REPLACE(L"playstatus", L"updated"); break;
+          switch (MediaPlayers.play_status) {
+            case track::recognition::PlayStatus::Stopped: REPLACE(L"playstatus", L"stopped"); break;
+            case track::recognition::PlayStatus::Playing: REPLACE(L"playstatus", L"playing"); break;
+            case track::recognition::PlayStatus::Updated: REPLACE(L"playstatus", L"updated"); break;
           }
           switch (taiga::GetCurrentServiceId()) {
             case sync::kMyAnimeList:
               REPLACE(L"animeurl", ENCODE(sync::myanimelist::GetAnimePage(*anime_item)));
               break;
-            case sync::kHummingbird:
-              REPLACE(L"animeurl", ENCODE(sync::hummingbird::GetAnimePage(*anime_item)));
+            case sync::kKitsu:
+              REPLACE(L"animeurl", ENCODE(sync::kitsu::GetAnimePage(*anime_item)));
+              break;
+            case sync::kAniList:
+              REPLACE(L"animeurl", ENCODE(sync::anilist::GetAnimePage(*anime_item)));
               break;
           }
         } else {
@@ -481,6 +488,7 @@ std::wstring ReplaceVariables(std::wstring str, const anime::Episode& episode,
   // Clean-up
   while (ReplaceString(str, L"\n\n", L"\n"));
   while (ReplaceString(str, L"  ", L" "));
+  Trim(str, L"\t\n\r ");
 
   // Return
   return str;

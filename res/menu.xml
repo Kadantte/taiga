@@ -15,23 +15,29 @@
 		<item name="Library folders" sub="Folders"/>
 		<item name="Scan available episodes" action="ScanEpisodesAll()"/>
 		<item type="separator"/>
-		<item name="Play &next episode&#9;Ctrl+N" action="PlayNext()"/>
-		<item name="Play &random anime&#9;Ctrl+R" action="PlayRandomAnime()"/>
+		<item name="Play &amp;next episode&#9;Ctrl+N" action="PlayNext()"/>
+		<item name="Play &amp;random anime&#9;Ctrl+R" action="PlayRandomAnime()"/>
 		<item type="separator"/>
-		<item name="E&xit" action="Exit()"/>
+		<item name="E&amp;xit" action="Exit()"/>
 	</menu>
 	<!-- Services -->
 	<menu name="Services">
 		<item name="Synchronize list&#9;Ctrl+S" action="Synchronize()"/>
 		<item type="separator"/>
-		<item name="Hummingbird" sub="Hummingbird"/>
+		<item name="AniList" sub="AniList"/>
+		<item name="Kitsu" sub="Kitsu"/>
 		<item name="MyAnimeList" sub="MyAnimeList"/>
 	</menu>
-	<!-- Hummingbird -->
-	<menu name="Hummingbird">
-		<item name="Go to my dashboard"       action="HummingbirdViewDashboard()"/>
-		<item name="Go to my profile"         action="HummingbirdViewProfile()"/>
-		<item name="Go to my recommendations" action="HummingbirdViewRecommendations()"/>
+	<!-- AniList -->
+	<menu name="AniList">
+		<item name="Go to my profile" action="AniListViewProfile()"/>
+		<item name="Go to my stats"   action="AniListViewStats()"/>
+	</menu>
+	<!-- Kitsu -->
+	<menu name="Kitsu">
+		<item name="Go to my feed"    action="KitsuViewFeed()"/>
+		<item name="Go to my library" action="KitsuViewLibrary()"/>
+		<item name="Go to my profile" action="KitsuViewProfile()"/>
 	</menu>
 	<!-- MyAnimeList -->
 	<menu name="MyAnimeList">
@@ -41,6 +47,7 @@
 	</menu>
 	<!-- Share -->
 	<menu name="Announce">
+		<item name="Discord"   action="AnnounceToDiscord(true)"/>
 		<item name="HTTP"      action="AnnounceToHTTP(true)"/>
 		<item name="mIRC"      action="AnnounceToMIRC(true)"/>
 		<item name="Skype"     action="AnnounceToSkype(true)"/>
@@ -48,6 +55,7 @@
 	</menu>
 	<!-- Tools -->
 	<menu name="Tools">
+		<item name="Export anime list" sub="Export"/>
 		<item name="External links" sub="ExternalLinks"/>
 		<item type="separator"/>
 		<item name="Enable anime recognition"    action="ToggleRecognition()" checked="1"/>
@@ -55,6 +63,11 @@
 		<item name="Enable auto synchronization" action="ToggleSynchronization()" checked="1"/>
 		<item type="separator"/>
 		<item name="Settings" action="Settings()"/>
+	</menu>
+	<!-- Export -->
+	<menu name="Export">
+		<item name="Export as Markdown..." action="ExportAsMarkdown"/>
+		<item name="Export as MyAnimeList XML..." action="ExportAsMalXml"/>
 	</menu>
 	<!-- External links -->
 	<menu name="ExternalLinks">
@@ -80,7 +93,7 @@
 	<!-- Help -->
 	<menu name="Help">
 		<item name="About Taiga" action="About()"/>
-		<item name="Support&#9;F1" action="URL(http://taiga.moe/#support)"/>
+		<item name="Support&#9;F1" action="URL(https://taiga.moe/#support)"/>
 		<item type="separator"/>
 		<item name="Check for updates" action="CheckUpdates()"/>
 	</menu>
@@ -105,47 +118,54 @@
 		<item name="Search" sub="Search"/>
 		<item type="separator"/>
 		<item name="Edit" action="EditAll()"/>
-		<item name="&Delete from list...&#9;Del" action="EditDelete()"/>
+		<item name="&amp;Delete from list...&#9;Del" action="EditDelete()"/>
 		<item type="separator"/>
 		<item name="Open folder&#9;Ctrl+O" action="OpenFolder()"/>
 		<item name="Scan available episodes&#9;F5" action="ScanEpisodes()"/>
 		<item type="separator"/>
 		<!-- Note: Overwritten -->
-		<item name="Play episode"           sub="PlayEpisode"/>
-		<item name="Play &last episode"   action="PlayLast()"/>
-		<item name="Play &next episode"   action="PlayNext()"/>
-		<item name="Play &random episode" action="PlayRandom()"/>
+		<item name="Play episode"                sub="PlayEpisode"/>
+		<item name="Play &amp;last episode"   action="PlayLast()"/>
+		<item name="Play &amp;next episode"   action="PlayNext()"/>
+		<item name="Play &amp;random episode" action="PlayRandom()"/>
+		<item name="Start new rewatch"        action="StartNewRewatch()"/>
 	</menu>
 	<!-- Edit -->
 	<menu name="Edit">
-		<item name="Set &date"          sub="EditDate"/>
-		<item name="Set &episode..." action="EditEpisode()"/>
-		<item name="Set sco&re"         sub="EditScore"/>
-		<item name="Set &status"        sub="EditStatus"/>
-		<item name="Set &tags..."    action="EditTags()"/>
+		<item name="Set &amp;date started"   sub="EditDateStarted"/>
+		<item name="Set date &amp;completed" sub="EditDateCompleted"/>
+		<item name="Set &amp;episode..."  action="EditEpisode()"/>
+		<item name="Set sco&amp;re"          sub="EditScore"/>
+		<item name="Set &amp;status"         sub="EditStatus"/>
+		<item name="Set &amp;tags..."     action="EditTags"/> <!-- Note: Overwritten -->
 		<item type="separator"/>
-		<item name="Delete from &list...&#9;Del" action="EditDelete()"/>
+		<item name="Delete from &amp;list...&#9;Del" action="EditDelete()"/>
 	</menu>
-	<!-- Date -->
-	<menu name="EditDate">
-		<item name="Clear date started"   action="EditDateClear(0)"/>
-		<item name="Clear date completed" action="EditDateClear(1)"/>
-		<item name="Clear both dates"     action="EditDateClear(2)"/>
+	<!-- Date started -->
+	<menu name="EditDateStarted">
+		<item name="Clear" action="EditDateClear(0)"/>
+		<item name="Set to date started airing" action="EditDateToStartedAiring()"/>
+	</menu>
+	<!-- Date completed -->
+	<menu name="EditDateCompleted">
+		<item name="Clear" action="EditDateClear(1)"/>
+		<item name="Set to date finished airing" action="EditDateToFinishedAiring()"/>
+		<item name="Set to last updated" action="EditDateToLastUpdated()"/>
 	</menu>
 	<!-- Score -->
 	<menu name="EditScore">
 		<!-- Note: Overwritten -->
-		<item name="(0) No Score"     action="EditScore(0)"  radio="1"/>
-		<item name="(1) Unwatchable"  action="EditScore(1)"  radio="1"/>
-		<item name="(2) Horrible"     action="EditScore(2)"  radio="1"/>
-		<item name="(3) Very Bad"     action="EditScore(3)"  radio="1"/>
-		<item name="(4) Bad"          action="EditScore(4)"  radio="1"/>
-		<item name="(5) Average"      action="EditScore(5)"  radio="1"/>
-		<item name="(6) Fine"         action="EditScore(6)"  radio="1"/>
-		<item name="(7) Good"         action="EditScore(7)"  radio="1"/>
-		<item name="(8) Very Good"    action="EditScore(8)"  radio="1"/>
-		<item name="(9) Great"        action="EditScore(9)"  radio="1"/>
-		<item name="(10) Masterpiece" action="EditScore(10)" radio="1"/>
+		<item name="(0) No Score"     action="EditScore(0)"   radio="1"/>
+		<item name="(1) Appalling"    action="EditScore(10)"  radio="1"/>
+		<item name="(2) Horrible"     action="EditScore(20)"  radio="1"/>
+		<item name="(3) Very Bad"     action="EditScore(30)"  radio="1"/>
+		<item name="(4) Bad"          action="EditScore(40)"  radio="1"/>
+		<item name="(5) Average"      action="EditScore(50)"  radio="1"/>
+		<item name="(6) Fine"         action="EditScore(60)"  radio="1"/>
+		<item name="(7) Good"         action="EditScore(70)"  radio="1"/>
+		<item name="(8) Very Good"    action="EditScore(80)"  radio="1"/>
+		<item name="(9) Great"        action="EditScore(90)"  radio="1"/>
+		<item name="(10) Masterpiece" action="EditScore(100)" radio="1"/>
 	</menu>
 	<!-- Status -->
 	<menu name="EditStatus">
@@ -159,14 +179,15 @@
 	<menu name="Search">
 		<!-- Note: Use %title% as the search string -->
 		<item name="AniDB"              action="URL(https://anidb.net/perl-bin/animedb.pl?show=animelist&amp;adb.search=%title%&amp;noalias=1&amp;do.update=update)"/>
+		<item name="AniList"            action="URL(https://anilist.co/search/anime?search=%title%)"/>
 		<item name="Anime News Network" action="URL(https://www.animenewsnetwork.com/search?q=%title%)"/>
-		<item name="Hummingbird"        action="URL(https://hummingbird.me/search?query=%title%&scope=anime)"/>
+		<item name="Kitsu"              action="URL(https://kitsu.io/anime?text=%title%)"/>
 		<item name="MyAnimeList"        action="URL(https://myanimelist.net/anime.php?q=%title%)"/>
-		<item name="Reddit"             action="URL(https://www.reddit.com/search?sort=new&amp;q=subreddit%3Aanime%20title%3A%22%title%%20episode%20discussion%22)"/>
+		<item name="Reddit"             action="URL(https://www.reddit.com/search?sort=new&amp;q=subreddit%3Aanime%20title%3A%title%%20episode%20discussion)"/>
 		<item name="Wikipedia"          action="URL(https://en.wikipedia.org/wiki/Special:Search?search=%title%)"/>
 		<item type="separator"/>
 		<item name="Custom RSS feed" action="SearchTorrents()"/>
-		<item name="NyaaTorrents" action="SearchTorrents(https://www.nyaa.se/?page=rss&amp;cats=1_37&amp;filter=2&amp;term=%title%)"/>
+		<item name="Nyaa.si" action="SearchTorrents(https://nyaa.si/?page=rss&amp;c=1_2&amp;f=0&amp;q=%title%)"/>
 	</menu>
 	<!-- Play episode -->
 	<menu name="PlayEpisode">
@@ -179,6 +200,8 @@
 		<item name="Season" action="anime_season" checked="1"/>
 		<item name="Type" action="anime_type" checked="1"/>
 		<item type="separator"/>
+		<item name="Date started" action="user_date_started" checked="1"/>
+		<item name="Date completed" action="user_date_completed" checked="1"/>
 		<item name="Last updated" action="user_last_updated" checked="1"/>
 		<item name="Progress" action="user_progress" checked="1"/>
 		<item name="Score" action="user_rating" checked="1"/>
@@ -205,6 +228,7 @@
 		<item name="Delete&#9;Del" action="Delete()"/>
 		<item type="separator"/>
 		<item name="Clear history..." action="ClearHistory()"/>
+		<item name="Clear queue..." action="ClearQueue()"/>
 	</menu>
 	
 	<!-- Season browser -->
@@ -319,6 +343,7 @@
 	<menu name="ScriptAddVariable">
 		<item name="Anime ID"         action="%id%"/>
 		<item name="Anime title"      action="%title%"/>
+		<item name="Anime season"     action="%season%"/>
 		<item name="Anime URL"        action="%animeurl%"/>
 		<item name="Image URL"        action="%image%"/>
 		<item name="Total episodes"   action="%total%"/>

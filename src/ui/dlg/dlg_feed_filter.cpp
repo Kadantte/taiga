@@ -1,22 +1,23 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "base/foreach.h"
+#include <windows/win/task_dialog.h>
+
 #include "base/gfx.h"
 #include "base/string.h"
 #include "library/anime_db.h"
@@ -28,8 +29,6 @@
 #include "ui/list.h"
 #include "ui/theme.h"
 #include "ui/ui.h"
-#include "win/win_gdi.h"
-#include "win/win_taskdialog.h"
 
 namespace ui {
 
@@ -230,6 +229,7 @@ INT_PTR FeedFilterDialog::DialogPage::DialogProc(HWND hwnd, UINT uMsg, WPARAM wP
     case WM_CTLCOLORSTATIC: {
       win::Dc dc = reinterpret_cast<HDC>(wParam);
       dc.SetBkMode(TRANSPARENT);
+      dc.SetTextColor(::GetSysColor(COLOR_WINDOWTEXT));
       dc.DetachDc();
       return reinterpret_cast<INT_PTR>(::GetSysColorBrush(COLOR_WINDOW));
     }
@@ -264,20 +264,20 @@ BOOL FeedFilterDialog::DialogPage0::OnInitDialog() {
   preset_list.SetView(LV_VIEW_TILE);
 
   // Insert presets
-  foreach_(it, Aggregator.filter_manager.presets) {
-    if (it->is_default)
+  for (const auto& preset : Aggregator.filter_manager.presets) {
+    if (preset.is_default)
       continue;
     int icon_ = ui::kIcon16_Funnel;
-    switch (it->filter.action) {
+    switch (preset.filter.action) {
       case kFeedFilterActionDiscard: icon_ = ui::kIcon16_FunnelCross; break;
       case kFeedFilterActionSelect:  icon_ = ui::kIcon16_FunnelTick;  break;
       case kFeedFilterActionPrefer:  icon_ = ui::kIcon16_FunnelPlus;  break;
     }
-    if (it->filter.conditions.empty())
+    if (preset.filter.conditions.empty())
       icon_ = ui::kIcon16_FunnelPencil;
-    preset_list.InsertItem(it - Aggregator.filter_manager.presets.begin(),
+    preset_list.InsertItem(preset_list.GetItemCount(),
                            0, icon_, I_COLUMNSCALLBACK, nullptr, LPSTR_TEXTCALLBACK,
-                           reinterpret_cast<LPARAM>(&(*it)));
+                           reinterpret_cast<LPARAM>(&preset));
   }
   preset_list.SelectItem(0);
 
@@ -299,10 +299,10 @@ LRESULT FeedFilterDialog::DialogPage0::OnNotify(int idCtrl, LPNMHDR pnmh) {
             FeedFilterPreset* preset = reinterpret_cast<FeedFilterPreset*>(plvdi->item.lParam);
             if (!preset) break;
             switch (plvdi->item.iSubItem) {
-              case 0: // Filter name
+              case 0:  // Filter name
                 plvdi->item.pszText = const_cast<LPWSTR>(preset->filter.name.c_str());
                 break;
-              case 1: // Preset description
+              case 1:  // Preset description
                 plvdi->item.pszText = const_cast<LPWSTR>(preset->description.c_str());
                 break;
             }
@@ -558,8 +558,8 @@ void FeedFilterDialog::DialogPage1::AddConditionToList(const FeedFilterCondition
 void FeedFilterDialog::DialogPage1::RefreshConditionList() {
   condition_list.DeleteAllItems();
 
-  foreach_(it, parent->filter.conditions)
-    AddConditionToList(*it);
+  for (const auto& condition : parent->filter.conditions)
+    AddConditionToList(condition);
 }
 
 void FeedFilterDialog::DialogPage1::ChangeAction() {
@@ -582,7 +582,7 @@ void FeedFilterDialog::DialogPage1::ChangeAction() {
 BOOL FeedFilterDialog::DialogPage2::OnInitDialog() {
   // Initialize anime list
   anime_list.Attach(GetDlgItem(IDC_LIST_FEED_FILTER_ANIME));
-  anime_list.EnableGroupView(win::GetVersion() > win::kVersionXp);
+  anime_list.EnableGroupView(true);
   anime_list.SetExtendedStyle(LVS_EX_CHECKBOXES | LVS_EX_DOUBLEBUFFER);
   anime_list.SetImageList(ui::Theme.GetImageList16().GetHandle());
   anime_list.SetTheme();
@@ -597,14 +597,14 @@ BOOL FeedFilterDialog::DialogPage2::OnInitDialog() {
 
   // Add anime to list
   int list_index = 0;
-  foreach_(it, AnimeDatabase.items) {
-    if (!it->second.IsInList())
+  for (const auto& pair : AnimeDatabase.items) {
+    if (!pair.second.IsInList())
       continue;
-    anime_list.InsertItem(list_index, it->second.GetMyStatus(),
-                          StatusToIcon(it->second.GetAiringStatus()), 0, nullptr,
-                          LPSTR_TEXTCALLBACK, static_cast<int>(it->second.GetId()));
-    foreach_(id, parent->filter.anime_ids) {
-      if (*id == it->second.GetId()) {
+    anime_list.InsertItem(list_index, pair.second.GetMyStatus(),
+                          StatusToIcon(pair.second.GetAiringStatus()), 0, nullptr,
+                          LPSTR_TEXTCALLBACK, static_cast<int>(pair.second.GetId()));
+    for (const auto& anime_id : parent->filter.anime_ids) {
+      if (anime_id == pair.second.GetId()) {
         anime_list.SetCheckState(list_index, TRUE);
         break;
       }
@@ -633,8 +633,8 @@ LRESULT FeedFilterDialog::DialogPage2::OnNotify(int idCtrl, LPNMHDR pnmh) {
           if (!anime_item)
             break;
           switch (plvdi->item.iSubItem) {
-            case 0: // Anime title
-              plvdi->item.pszText = const_cast<LPWSTR>(anime_item->GetTitle().data());
+            case 0:  // Anime title
+              plvdi->item.pszText = const_cast<LPWSTR>(anime::GetPreferredTitle(*anime_item).data());
               break;
           }
           break;
@@ -647,7 +647,7 @@ LRESULT FeedFilterDialog::DialogPage2::OnNotify(int idCtrl, LPNMHDR pnmh) {
             for (int i = 0; i < anime_list.GetItemCount(); i++) {
               auto anime_item = AnimeDatabase.FindItem(static_cast<int>(anime_list.GetItemParam(i)));
               if (anime_item && anime_list.GetCheckState(i))
-                AppendString(text, anime_item->GetTitle());
+                AppendString(text, anime::GetPreferredTitle(*anime_item));
             }
             if (text.empty())
               text = L"(nothing)";

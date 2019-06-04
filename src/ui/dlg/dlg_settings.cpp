@@ -1,25 +1,28 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <windows/win/task_dialog.h>
+
 #include "base/base64.h"
 #include "base/file.h"
-#include "base/foreach.h"
+#include "base/format.h"
 #include "base/string.h"
+#include "library/anime_util.h"
 #include "library/history.h"
 #include "sync/manager.h"
 #include "taiga/resource.h"
@@ -30,7 +33,6 @@
 #include "track/monitor.h"
 #include "ui/dlg/dlg_settings.h"
 #include "ui/theme.h"
-#include "win/win_taskdialog.h"
 
 namespace ui {
 
@@ -71,7 +73,8 @@ void SettingsDialog::SetCurrentSection(SettingsSections section) {
     case kSettingsSectionServices:
       tab_.InsertItem(0, L"Main", kSettingsPageServicesMain);
       tab_.InsertItem(1, L"MyAnimeList", kSettingsPageServicesMal);
-      tab_.InsertItem(2, L"Hummingbird", kSettingsPageServicesHummingbird);
+      tab_.InsertItem(2, L"Kitsu", kSettingsPageServicesKitsu);
+      tab_.InsertItem(3, L"AniList", kSettingsPageServicesAniList);
       break;
     case kSettingsSectionLibrary:
       tab_.InsertItem(0, L"Folders", kSettingsPageLibraryFolders);
@@ -87,10 +90,11 @@ void SettingsDialog::SetCurrentSection(SettingsSections section) {
       tab_.InsertItem(2, L"Streaming media", kSettingsPageRecognitionStream);
       break;
     case kSettingsSectionSharing:
-      tab_.InsertItem(0, L"HTTP", kSettingsPageSharingHttp);
-      tab_.InsertItem(1, L"mIRC", kSettingsPageSharingMirc);
-      tab_.InsertItem(2, L"Skype", kSettingsPageSharingSkype);
-      tab_.InsertItem(3, L"Twitter", kSettingsPageSharingTwitter);
+      tab_.InsertItem(0, L"Discord", kSettingsPageSharingDiscord);
+      tab_.InsertItem(1, L"HTTP", kSettingsPageSharingHttp);
+      tab_.InsertItem(2, L"mIRC", kSettingsPageSharingMirc);
+      tab_.InsertItem(3, L"Skype", kSettingsPageSharingSkype);
+      tab_.InsertItem(4, L"Twitter", kSettingsPageSharingTwitter);
       break;
     case kSettingsSectionTorrents:
       tab_.InsertItem(0, L"Discovery", kSettingsPageTorrentsDiscovery);
@@ -169,10 +173,7 @@ BOOL SettingsDialog::OnInitDialog() {
 void SettingsDialog::OnOK() {
   win::ListView list;
   SettingsPage* page = nullptr;
-
-  std::wstring previous_service = taiga::GetCurrentService()->canonical_name();
-  std::wstring previous_user = taiga::GetCurrentUsername();
-  std::wstring previous_theme = Settings[taiga::kApp_Interface_Theme];
+  const taiga::AppSettings previous_settings = Settings;
 
   // Services > Main
   page = &pages[kSettingsPageServicesMain];
@@ -190,11 +191,16 @@ void SettingsDialog::OnOK() {
     Settings.Set(taiga::kSync_Service_Mal_Username, page->GetDlgItemText(IDC_EDIT_USER_MAL));
     Settings.Set(taiga::kSync_Service_Mal_Password, Base64Encode(page->GetDlgItemText(IDC_EDIT_PASS_MAL)));
   }
-  // Services > Hummingbird
-  page = &pages[kSettingsPageServicesHummingbird];
+  // Services > Kitsu
+  page = &pages[kSettingsPageServicesKitsu];
   if (page->IsWindow()) {
-    Settings.Set(taiga::kSync_Service_Hummingbird_Username, page->GetDlgItemText(IDC_EDIT_USER_HUMMINGBIRD));
-    Settings.Set(taiga::kSync_Service_Hummingbird_Password, Base64Encode(page->GetDlgItemText(IDC_EDIT_PASS_HUMMINGBIRD)));
+    Settings.Set(taiga::kSync_Service_Kitsu_Email, page->GetDlgItemText(IDC_EDIT_USER_KITSU));
+    Settings.Set(taiga::kSync_Service_Kitsu_Password, Base64Encode(page->GetDlgItemText(IDC_EDIT_PASS_KITSU)));
+  }
+  // Services > AniList
+  page = &pages[kSettingsPageServicesAniList];
+  if (page->IsWindow()) {
+    Settings.Set(taiga::kSync_Service_AniList_Username, page->GetDlgItemText(IDC_EDIT_USER_ANILIST));
   }
 
   // Library > Folders
@@ -227,7 +233,8 @@ void SettingsDialog::OnOK() {
   if (page->IsWindow()) {
     Settings.Set(taiga::kApp_List_DoubleClickAction, page->GetComboSelection(IDC_COMBO_DBLCLICK));
     Settings.Set(taiga::kApp_List_MiddleClickAction, page->GetComboSelection(IDC_COMBO_MDLCLICK));
-    Settings.Set(taiga::kApp_List_DisplayEnglishTitles, page->IsDlgButtonChecked(IDC_CHECK_LIST_ENGLISH));
+    Settings.Set(taiga::kApp_List_TitleLanguagePreference, anime::GetTitleLanguagePreferenceStr(
+        page->GetComboSelection(IDC_COMBO_TITLELANG)));
     Settings.Set(taiga::kApp_List_HighlightNewEpisodes, page->IsDlgButtonChecked(IDC_CHECK_HIGHLIGHT));
     Settings.Set(taiga::kApp_List_DisplayHighlightedOnTop, page->IsDlgButtonChecked(IDC_CHECK_HIGHLIGHT_ONTOP));
     Settings.Set(taiga::kApp_List_ProgressDisplayAired, page->IsDlgButtonChecked(IDC_CHECK_LIST_PROGRESS_AIRED));
@@ -269,6 +276,12 @@ void SettingsDialog::OnOK() {
     list.SetWindowHandle(nullptr);
   }
 
+  // Sharing > Discord
+  page = &pages[kSettingsPageSharingDiscord];
+  if (page->IsWindow()) {
+    Settings.Set(taiga::kShare_Discord_Enabled, page->IsDlgButtonChecked(IDC_CHECK_DISCORD));
+    Settings.Set(taiga::kShare_Discord_Username_Enabled, page->IsDlgButtonChecked(IDC_CHECK_DISCORD_USERNAME));
+  }
   // Sharing > HTTP
   page = &pages[kSettingsPageSharingHttp];
   if (page->IsWindow()) {
@@ -349,7 +362,7 @@ void SettingsDialog::OnOK() {
   Settings.Save();
 
   // Apply changes
-  Settings.ApplyChanges(previous_service, previous_user, previous_theme);
+  Settings.ApplyChanges(previous_settings);
 
   // End dialog
   EndDialog(IDOK);
@@ -365,7 +378,7 @@ INT_PTR SettingsDialog::DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       HWND hwnd_static = reinterpret_cast<HWND>(lParam);
       if (hwnd_static == GetDlgItem(IDC_STATIC_TITLE)) {
         ::SetBkMode(hdc, TRANSPARENT);
-        ::SetTextColor(hdc, ::GetSysColor(COLOR_WINDOW));
+        ::SetTextColor(hdc, ::GetSysColor(COLOR_HIGHLIGHTTEXT));
         return reinterpret_cast<INT_PTR>(::GetSysColorBrush(COLOR_APPWORKSPACE));
       }
       break;
@@ -495,6 +508,10 @@ void SettingsDialog::RefreshCache() {
   // Torrent files
   text = ToWstr(Stats.torrent_count) + L" item(s), " + ToSizeString(Stats.torrent_size);
   page.SetDlgItemText(IDC_STATIC_CACHE3, text.c_str());
+
+  // Torrent history
+  text = ToWstr(Aggregator.GetArchiveSize()) + L" item(s)";
+  page.SetDlgItemText(IDC_STATIC_CACHE4, text.c_str());
 }
 
 void SettingsDialog::RefreshTorrentFilterList(HWND hwnd_list) {
@@ -508,15 +525,27 @@ void SettingsDialog::RefreshTorrentFilterList(HWND hwnd_list) {
   list.SetWindowHandle(nullptr);
 }
 
+void SettingsDialog::UpdateTorrentFilterList(HWND hwnd_list) {
+  win::ListView list = hwnd_list;
+
+  for (size_t i = 0; i < feed_filters_.size(); ++i) {
+    const auto& feed_filter = feed_filters_.at(i);
+    list.SetItemParam(i, reinterpret_cast<LPARAM>(&feed_filter));
+  }
+
+  list.SetWindowHandle(nullptr);
+}
+
 void SettingsDialog::RefreshTwitterLink() {
   std::wstring text;
 
   if (Settings[taiga::kShare_Twitter_Username].empty()) {
     text = L"Taiga is not authorized to post to your Twitter account yet.";
   } else {
-    text = L"Taiga is authorized to post to this Twitter account: ";
-    text += L"<a href=\"URL(http://twitter.com/" + Settings[taiga::kShare_Twitter_Username];
-    text += L")\">" + Settings[taiga::kShare_Twitter_Username] + L"</a>";
+    text = L"Taiga is authorized to post to this Twitter account: "
+           L"<a href=\"URL(https://twitter.com/{})\">{}</a>"_format(
+             Settings[taiga::kShare_Twitter_Username],
+             Settings[taiga::kShare_Twitter_Username]);
   }
 
   pages[kSettingsPageSharingTwitter].SetDlgItemText(IDC_LINK_TWITTER, text.c_str());

@@ -1,31 +1,32 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef TAIGA_UI_DLG_MAIN_H
-#define TAIGA_UI_DLG_MAIN_H
+#pragma once
 
 #include <map>
 #include <vector>
 
+#include <windows/win/common_controls.h>
+#include <windows/win/dialog.h>
+#include <windows/win/gdi.h>
+#include <windows/win/snappable.h>
+
 #include "library/anime_filter.h"
-#include "win/ctrl/win_ctrl.h"
-#include "win/win_dialog.h"
-#include "win/win_gdi.h"
 
 #define WM_TAIGA_SHOWMENU WM_USER + 1337
 
@@ -39,10 +40,10 @@ enum MainToolbarButtons {
   kToolbarButtonDebug = 207
 };
 
-enum SearchMode {
-  kSearchModeNone,
-  kSearchModeService,
-  kSearchModeFeed
+enum class SearchMode {
+  None,
+  Service,
+  Feed,
 };
 
 enum SidebarItems {
@@ -57,7 +58,7 @@ enum SidebarItems {
   kSidebarItemFeeds
 };
 
-class MainDialog : public win::Dialog {
+class MainDialog : public win::Dialog, public win::Snappable {
 public:
   MainDialog();
   virtual ~MainDialog() {}
@@ -151,8 +152,8 @@ public:
   // Search bar
   class SearchBar {
   public:
-    SearchBar() : mode(kSearchModeNone), parent(nullptr) {}
-    int mode;
+    SearchBar() : mode(SearchMode::None), parent(nullptr) {}
+    SearchMode mode;
     MainDialog* parent;
     anime::Filters filters;
     std::map<int, std::wstring> text;
@@ -165,5 +166,3 @@ private:
 extern MainDialog DlgMain;
 
 }  // namespace ui
-
-#endif  // TAIGA_UI_DLG_MAIN_H

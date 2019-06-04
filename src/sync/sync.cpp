@@ -1,26 +1,26 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "base/crypto.h"
-#include "base/foreach.h"
 #include "base/string.h"
 #include "base/url.h"
 #include "library/anime_db.h"
+#include "library/anime_season.h"
 #include "library/anime_util.h"
 #include "library/history.h"
 #include "sync/manager.h"
@@ -33,35 +33,65 @@
 
 namespace sync {
 
-void AuthenticateUser(bool download) {
-  if (!taiga::GetCurrentUsername().empty() &&
-      !taiga::GetCurrentPassword().empty()) {
-    ui::ChangeStatusText(L"Logging in...");
-    ui::EnableDialogInput(ui::kDialogMain, false);
-
-    Request request(kAuthenticateUser);
-    SetActiveServiceForRequest(request);
-    if (!AddAuthenticationToRequest(request))
-      return;
-    ServiceManager.MakeRequest(request);
-
-  } else if (!taiga::GetCurrentUsername().empty() && download) {
-    GetLibraryEntries();
-
-  } else {
+bool AuthenticateUser() {
+  if (!IsUserAuthenticationAvailable()) {
     ui::ChangeStatusText(
-        L"Cannot authenticate. Username or password not available.");
+        L"Cannot authenticate. Account settings unavailable.");
+    return false;
   }
+
+  ui::ChangeStatusText(L"Logging in...");
+  ui::EnableDialogInput(ui::Dialog::Main, false);
+
+  Request request(kAuthenticateUser);
+  SetActiveServiceForRequest(request);
+
+  if (!AddAuthenticationToRequest(request))
+    return false;
+
+  ServiceManager.MakeRequest(request);
+  return true;
 }
 
-void GetLibraryEntries() {
+void GetUser() {
+  if (!IsUserAccountAvailable()) {
+    ui::ChangeStatusText(
+        L"Cannot get user information. Account settings unavailable.");
+    return;
+  }
+
+  ui::ChangeStatusText(L"Retrieving user information...");
+  ui::EnableDialogInput(ui::Dialog::Main, false);
+
+  Request request(kGetUser);
+  SetActiveServiceForRequest(request);
+
+  if (!AddAuthenticationToRequest(request))
+    return;
+
+  ServiceManager.MakeRequest(request);
+}
+
+void GetLibraryEntries(const int offset) {
+  const auto service = taiga::GetCurrentService();
+  switch (service->id()) {
+    case sync::kKitsu:
+      if (service->user().id.empty()) {
+        ui::ChangeStatusText(
+            L"Cannot get anime list. User ID is not available.");
+        return;
+      }
+      break;
+  }
+
   ui::ChangeStatusText(L"Downloading anime list...");
-  ui::EnableDialogInput(ui::kDialogMain, false);
+  ui::EnableDialogInput(ui::Dialog::Main, false);
 
   Request request(kGetLibraryEntries);
   SetActiveServiceForRequest(request);
   if (!AddAuthenticationToRequest(request))
     return;
+  AddPageOffsetToRequest(offset, request);
   ServiceManager.MakeRequest(request);
 }
 
@@ -71,6 +101,17 @@ void GetMetadataById(int id) {
   if (!AddAuthenticationToRequest(request))
     return;
   AddServiceDataToRequest(request, id);
+  ServiceManager.MakeRequest(request);
+}
+
+void GetSeason(const anime::Season season, const int offset) {
+  Request request(kGetSeason);
+  SetActiveServiceForRequest(request);
+  if (!AddAuthenticationToRequest(request))
+    return;
+  AddPageOffsetToRequest(offset, request);
+  request.data[L"year"] = ToWstr(season.year);
+  request.data[L"season"] = ToLower_Copy(season.GetName());
   ServiceManager.MakeRequest(request);
 }
 
@@ -86,12 +127,33 @@ void SearchTitle(string_t title, int id) {
 }
 
 void Synchronize() {
-  if (!Taiga.logged_in) {
-    AuthenticateUser(true);
-  } else if (History.queue.GetItemCount() == 0) {
-    GetLibraryEntries();
-  } else {
+  bool authenticated = UserAuthenticated();
+
+  if (!authenticated) {
+    authenticated = AuthenticateUser();
+    // Special case where we allow downloading lists without authentication
+    if (!authenticated && !taiga::GetCurrentUsername().empty()) {
+      if (ServiceSupportsRequestType(kGetUser)) {
+        GetUser();
+      } else {
+        GetLibraryEntries();
+      }
+    }
+    return;
+  }
+
+  if (History.queue.GetItemCount()) {
+    if (taiga::GetCurrentServiceId() == sync::kKitsu) {
+      // Library IDs can be missing if the user has recently upgraded from a
+      // previous installation without Kitsu support.
+      if (anime::ListHasMissingIds()) {
+        GetLibraryEntries();
+        return;
+      }
+    }
     History.queue.Check(false);
+  } else {
+    GetLibraryEntries();
   }
 }
 
@@ -112,15 +174,17 @@ void UpdateLibraryEntry(AnimeValues& anime_values, int id,
   if (anime_values.score)
     request.data[L"score"] = ToWstr(*anime_values.score);
   if (anime_values.date_start)
-    request.data[L"date_start"] = *anime_values.date_start;
+    request.data[L"date_start"] = anime_values.date_start->to_string();
   if (anime_values.date_finish)
-    request.data[L"date_finish"] = *anime_values.date_finish;
+    request.data[L"date_finish"] = anime_values.date_finish->to_string();
   if (anime_values.enable_rewatching)
     request.data[L"enable_rewatching"] = ToWstr(*anime_values.enable_rewatching);
   if (anime_values.rewatched_times)
     request.data[L"rewatched_times"] = ToWstr(*anime_values.rewatched_times);
   if (anime_values.tags)
     request.data[L"tags"] = *anime_values.tags;
+  if (anime_values.notes)
+    request.data[L"notes"] = *anime_values.notes;
 
   ServiceManager.MakeRequest(request);
 }
@@ -140,8 +204,7 @@ void DownloadImage(int id, const string_t& image_url) {
 
 bool AddAuthenticationToRequest(Request& request) {
   if (RequestNeedsAuthentication(request.type, request.service_id))
-    if (taiga::GetCurrentUsername().empty() ||
-        taiga::GetCurrentPassword().empty())
+    if (!IsUserAuthenticationAvailable())
       return false;  // Authentication is required but not available
 
   auto service = taiga::GetCurrentService();
@@ -150,7 +213,23 @@ bool AddAuthenticationToRequest(Request& request) {
   request.data[service->canonical_name() + L"-password"] =
       taiga::GetCurrentPassword();
 
+  switch (service->id()) {
+    case sync::kKitsu:
+      request.data[service->canonical_name() + L"-email"] =
+          Settings[taiga::kSync_Service_Kitsu_Email];
+      break;
+  }
+
   return true;
+}
+
+void AddPageOffsetToRequest(const int offset, Request& request) {
+  switch (taiga::GetCurrentServiceId()) {
+    case sync::kKitsu:
+    case sync::kAniList:
+      request.data[L"page_offset"] = ToWstr(offset);
+      break;
+  }
 }
 
 bool AddServiceDataToRequest(Request& request, int id) {
@@ -161,10 +240,15 @@ bool AddServiceDataToRequest(Request& request, int id) {
   if (!anime_item)
     return false;
 
-  request.data[ServiceManager.service(kMyAnimeList)->canonical_name() + L"-id"] =
-      anime_item->GetId(kMyAnimeList);
-  request.data[ServiceManager.service(kHummingbird)->canonical_name() + L"-id"] =
-      anime_item->GetId(kHummingbird);
+  auto add_data = [&](sync::ServiceId service_id) {
+    const auto canonical_name = ServiceManager.service(service_id)->canonical_name();
+    request.data[canonical_name + L"-id"] = anime_item->GetId(service_id);
+    request.data[canonical_name + L"-library-id"] = anime_item->GetMyId();
+  };
+
+  add_data(kMyAnimeList);
+  add_data(kKitsu);
+  add_data(kAniList);
 
   return true;
 }
@@ -178,14 +262,91 @@ void SetActiveServiceForRequest(Request& request) {
   request.service_id = taiga::GetCurrentServiceId();
 }
 
+bool UserAuthenticated() {
+  auto service = taiga::GetCurrentService();
+  return service->user().authenticated;
+}
+
+void InvalidateUserAuthentication() {
+  auto service = taiga::GetCurrentService();
+  service->user().authenticated = false;
+}
+
+bool IsUserAccountAvailable() {
+  constexpr auto not_empty = [](taiga::AppSettingName name) {
+    return !Settings[name].empty();
+  };
+
+  switch (taiga::GetCurrentServiceId()) {
+    case sync::kMyAnimeList:
+      return not_empty(taiga::kSync_Service_Mal_Username);
+    case sync::kKitsu:
+      return not_empty(taiga::kSync_Service_Kitsu_Email) ||
+             not_empty(taiga::kSync_Service_Kitsu_Username);
+    case sync::kAniList:
+      return not_empty(taiga::kSync_Service_AniList_Username);
+  }
+
+  return false;
+}
+
+bool IsUserAuthenticationAvailable() {
+  constexpr auto not_empty = [](taiga::AppSettingName name) {
+    return !Settings[name].empty();
+  };
+
+  switch (taiga::GetCurrentServiceId()) {
+    case sync::kMyAnimeList:
+      return not_empty(taiga::kSync_Service_Mal_Username) &&
+             not_empty(taiga::kSync_Service_Mal_Password);
+    case sync::kKitsu:
+      return (not_empty(taiga::kSync_Service_Kitsu_Email) ||
+              not_empty(taiga::kSync_Service_Kitsu_Username)) &&
+             not_empty(taiga::kSync_Service_Kitsu_Password);
+    case sync::kAniList:
+      return not_empty(taiga::kSync_Service_AniList_Username) &&
+             not_empty(taiga::kSync_Service_AniList_Token);
+  }
+
+  return false;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
+
+bool ServiceSupportsRequestType(RequestType request_type) {
+  const auto service_id = taiga::GetCurrentServiceId();
+
+  switch (request_type) {
+    case kGetUser:
+      switch (service_id) {
+        case sync::kKitsu:
+          return true;
+        default:
+          return false;
+      }
+    case kGetSeason:
+      switch (service_id) {
+        case sync::kKitsu:
+        case sync::kAniList:
+          return true;
+        default:
+          return false;
+      }
+    default:
+      return true;
+  }
+}
 
 RequestType ClientModeToRequestType(taiga::HttpClientMode client_mode) {
   switch (client_mode) {
     case taiga::kHttpServiceAuthenticateUser:
       return kAuthenticateUser;
+    case taiga::kHttpServiceGetUser:
+      return kGetUser;
     case taiga::kHttpServiceGetMetadataById:
       return kGetMetadataById;
+    case taiga::kHttpServiceGetSeason:
+      return kGetSeason;
     case taiga::kHttpServiceSearchTitle:
       return kSearchTitle;
     case taiga::kHttpServiceAddLibraryEntry:
@@ -205,8 +366,12 @@ taiga::HttpClientMode RequestTypeToClientMode(RequestType request_type) {
   switch (request_type) {
     case kAuthenticateUser:
       return taiga::kHttpServiceAuthenticateUser;
+    case kGetUser:
+      return taiga::kHttpServiceGetUser;
     case kGetMetadataById:
       return taiga::kHttpServiceGetMetadataById;
+    case kGetSeason:
+      return taiga::kHttpServiceGetSeason;
     case kSearchTitle:
       return taiga::kHttpServiceSearchTitle;
     case kAddLibraryEntry:

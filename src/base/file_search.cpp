@@ -1,28 +1,30 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "error.h"
+#include <windows/win/error.h>
+
 #include "file.h"
 #include "log.h"
 #include "string.h"
 
 FileSearchHelper::FileSearchHelper()
-    : minimum_file_size_(0),
+    : log_errors_(true),
+      minimum_file_size_(0),
       skip_directories_(false),
       skip_files_(false),
       skip_subdirectories_(false) {
@@ -52,7 +54,11 @@ bool FileSearchHelper::Search(const std::wstring& root,
 
   do {
     if (handle == INVALID_HANDLE_VALUE) {
-      LOG(LevelError, base::FormatError(GetLastError()) + L"\nPath: " + path);
+      if (log_errors_) {
+        auto error_message = win::FormatError(GetLastError());
+        TrimRight(error_message, L"\r\n");
+        LOGE(L"{}\nPath: {}", error_message, path);
+      }
       SetLastError(ERROR_SUCCESS);
       continue;
     }
@@ -96,6 +102,10 @@ bool FileSearchHelper::OnFile(const std::wstring& root,
                               const std::wstring& name,
                               const WIN32_FIND_DATA& data) {
   return false;
+}
+
+void FileSearchHelper::set_log_errors(bool log_errors) {
+  log_errors_ = log_errors;
 }
 
 void FileSearchHelper::set_minimum_file_size(ULONGLONG minimum_file_size) {

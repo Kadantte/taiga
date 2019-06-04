@@ -1,29 +1,34 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <windows/win/common_dialogs.h>
+
+#include "base/format.h"
 #include "base/log.h"
 #include "base/process.h"
 #include "base/string.h"
 #include "library/anime_db.h"
 #include "library/anime_util.h"
 #include "library/discover.h"
+#include "library/export.h"
 #include "library/history.h"
-#include "sync/hummingbird_util.h"
+#include "sync/anilist_util.h"
+#include "sync/kitsu_util.h"
 #include "sync/myanimelist_util.h"
 #include "sync/sync.h"
 #include "taiga/announce.h"
@@ -41,10 +46,9 @@
 #include "ui/dialog.h"
 #include "ui/menu.h"
 #include "ui/ui.h"
-#include "win/win_commondialog.h"
 
 void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
-  LOG(LevelDebug, action);
+  LOGD(action);
 
   std::wstring body;
   size_t pos = action.find('(');
@@ -63,12 +67,45 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
   // CheckUpdates()
   //   Checks for a new version of the program.
   if (action == L"CheckUpdates") {
-    ui::ShowDialog(ui::kDialogUpdate);
+    ui::ShowDialog(ui::Dialog::Update);
 
   // Exit(), Quit()
   //   Exits from Taiga.
   } else if (action == L"Exit" || action == L"Quit") {
     ui::DlgMain.Destroy();
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Export
+
+  // ExportAsMalXml()
+  //   Exports library in MAL XML format.
+  } else if (action == L"ExportAsMalXml") {
+    std::wstring path;
+    if (win::BrowseForFolder(ui::GetWindowHandle(ui::Dialog::Main),
+                             L"Select Export Location", L"", path)) {
+      AddTrailingSlash(path);
+      path += L"animelist_{}.xml"_format(std::time(nullptr));
+      if (library::ExportAsMalXml(path)) {
+        ui::ChangeStatusText(L"Exported list to: " + path);
+      } else {
+        ui::ChangeStatusText(L"Could not export list to: " + path);
+      }
+    }
+
+  // ExportAsMarkdown()
+  //   Exports library in Markdown format.
+  } else if (action == L"ExportAsMarkdown") {
+    std::wstring path;
+    if (win::BrowseForFolder(ui::GetWindowHandle(ui::Dialog::Main),
+                             L"Select Export Location", L"", path)) {
+      AddTrailingSlash(path);
+      path += L"animelist_{}.md"_format(std::time(nullptr));
+      if (library::ExportAsMarkdown(path)) {
+        ui::ChangeStatusText(L"Exported list to: " + path);
+      } else {
+        ui::ChangeStatusText(L"Could not export list to: " + path);
+      }
+    }
 
   //////////////////////////////////////////////////////////////////////////////
   // Services
@@ -87,8 +124,7 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
     if (!local_search) {
       auto service = taiga::GetCurrentService();
       if (service->RequestNeedsAuthentication(sync::kSearchTitle)) {
-        if (taiga::GetCurrentUsername().empty() ||
-            taiga::GetCurrentPassword().empty()) {
+        if (!sync::IsUserAuthenticationAvailable()) {
           ui::OnSettingsAccountEmpty();
           return;
         }
@@ -100,16 +136,30 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
 
   // ViewAnimePage
   //   Opens up anime page on the active service.
-  //   lParam is an anime ID.
+  //   wParam is a BOOL value that defines lParam.
+  //   lParam is an anime ID, or a pointer to a vector of anime IDs.
   } else if (action == L"ViewAnimePage") {
-    int anime_id = static_cast<int>(lParam);
-    switch (taiga::GetCurrentServiceId()) {
-      case sync::kMyAnimeList:
-        sync::myanimelist::ViewAnimePage(anime_id);
-        break;
-      case sync::kHummingbird:
-        sync::hummingbird::ViewAnimePage(anime_id);
-        break;
+    const auto view_anime_page = [](const int anime_id) {
+      switch (taiga::GetCurrentServiceId()) {
+        case sync::kMyAnimeList:
+          sync::myanimelist::ViewAnimePage(anime_id);
+          break;
+        case sync::kKitsu:
+          sync::kitsu::ViewAnimePage(anime_id);
+          break;
+        case sync::kAniList:
+          sync::anilist::ViewAnimePage(anime_id);
+          break;
+      }
+    };
+    if (!wParam) {
+      const int anime_id = static_cast<int>(lParam);
+      view_anime_page(anime_id);
+    } else {
+      const auto& anime_ids = *reinterpret_cast<std::vector<int>*>(lParam);
+      for (const auto anime_id : anime_ids) {
+        view_anime_page(anime_id);
+      }
     }
 
   // ViewUpcomingAnime
@@ -118,9 +168,6 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
     switch (taiga::GetCurrentServiceId()) {
       case sync::kMyAnimeList:
         sync::myanimelist::ViewUpcomingAnime();
-        break;
-      case sync::kHummingbird:
-        sync::hummingbird::ViewUpcomingAnime();
         break;
     }
 
@@ -135,16 +182,24 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
   } else if (action == L"MalViewHistory") {
     sync::myanimelist::ViewHistory();
 
-  // HummingbirdViewProfile()
-  // HummingbirdViewDashboard()
-  // HummingbirdViewRecommendations()
-  //   Opens up Hummingbird user pages.
-  } else if (action == L"HummingbirdViewProfile") {
-    sync::hummingbird::ViewProfile();
-  } else if (action == L"HummingbirdViewDashboard") {
-    sync::hummingbird::ViewDashboard();
-  } else if (action == L"HummingbirdViewRecommendations") {
-    sync::hummingbird::ViewRecommendations();
+  // KitsuViewFeed()
+  // KitsuViewLibrary()
+  // KitsuViewProfile()
+  //   Opens up Kitsu user pages.
+  } else if (action == L"KitsuViewFeed") {
+    sync::kitsu::ViewFeed();
+  } else if (action == L"KitsuViewLibrary") {
+    sync::kitsu::ViewLibrary();
+  } else if (action == L"KitsuViewProfile") {
+    sync::kitsu::ViewProfile();
+
+  // AniListViewProfile()
+  // AniListViewStats()
+  //   Opens up AniList user pages.
+  } else if (action == L"AniListViewProfile") {
+    sync::anilist::ViewProfile();
+  } else if (action == L"AniListViewStats") {
+    sync::anilist::ViewStats();
 
   //////////////////////////////////////////////////////////////////////////////
 
@@ -171,7 +226,7 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
   // About()
   //   Shows about window.
   } else if (action == L"About") {
-    ui::ShowDialog(ui::kDialogAbout);
+    ui::ShowDialog(ui::Dialog::About);
 
   // Info([anime_id])
   //   Shows anime information window.
@@ -182,7 +237,7 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
 
   // MainDialog()
   } else if (action == L"MainDialog") {
-    ui::ShowDialog(ui::kDialogMain);
+    ui::ShowDialog(ui::Dialog::Main);
 
   // Settings()
   //   Shows settings window.
@@ -250,6 +305,18 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
     if (ui::OnHistoryClear())
       History.Clear();
 
+  // ClearQueue()
+  //   Deletes or merges all queued updates.
+  } else if (action == L"ClearQueue") {
+    switch (ui::OnHistoryQueueClear()) {
+      case IDYES:  // Delete
+        History.queue.Clear();
+        break;
+      case IDNO:   // Merge
+        History.queue.Merge();
+        break;
+    }
+
   //////////////////////////////////////////////////////////////////////////////
   // Tracker
 
@@ -257,7 +324,7 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
   //   Opens up a dialog to add new library folder.
   } else if (action == L"AddFolder") {
     std::wstring path;
-    if (win::BrowseForFolder(ui::GetWindowHandle(ui::kDialogMain),
+    if (win::BrowseForFolder(ui::GetWindowHandle(ui::Dialog::Main),
                              L"Add a Library Folder", L"", path)) {
       Settings.library_folders.push_back(path);
       if (Settings.GetBool(taiga::kLibrary_WatchFolders))
@@ -316,6 +383,11 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
   //////////////////////////////////////////////////////////////////////////////
   // Sharing
 
+  // AnnounceToDiscord(force)
+  //   Updates rich presence.
+  } else if (action == L"AnnounceToDiscord") {
+    Announcer.Do(taiga::kAnnounceToDiscord, nullptr, body == L"true");
+
   // AnnounceToHTTP(force)
   //   Sends an HTTP request.
   } else if (action == L"AnnounceToHTTP") {
@@ -363,6 +435,57 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
       History.queue.Add(history_item);
     }
 
+  // EditDateToStartedAiring
+  //   Sets date started to date started airing.
+  //   lParam is a pointer to a vector of anime IDs.
+  } else if (action == L"EditDateToStartedAiring") {
+    const auto& anime_ids = *reinterpret_cast<std::vector<int>*>(lParam);
+    for (const auto& anime_id : anime_ids) {
+      auto anime_item = AnimeDatabase.FindItem(anime_id);
+      if (!anime_item || anime_item->GetMyDateStart() || !anime_item->GetDateStart())
+        continue;
+      HistoryItem history_item;
+      history_item.anime_id = anime_id;
+      history_item.date_start = anime_item->GetDateStart();
+      history_item.mode = taiga::kHttpServiceUpdateLibraryEntry;
+      History.queue.Add(history_item);
+    }
+
+  // EditDateToFinishedAiring
+  //   Sets date completed to date finished airing.
+  //   lParam is a pointer to a vector of anime IDs.
+  } else if (action == L"EditDateToFinishedAiring") {
+    const auto& anime_ids = *reinterpret_cast<std::vector<int>*>(lParam);
+    for (const auto& anime_id : anime_ids) {
+      auto anime_item = AnimeDatabase.FindItem(anime_id);
+      if (!anime_item || anime_item->GetMyDateEnd() || !anime_item->GetDateEnd())
+        continue;
+      HistoryItem history_item;
+      history_item.anime_id = anime_id;
+      history_item.date_finish = anime_item->GetDateEnd();
+      history_item.mode = taiga::kHttpServiceUpdateLibraryEntry;
+      History.queue.Add(history_item);
+    }
+
+  // EditDateToLastUpdated
+  //   Sets date completed to last updated.
+  //   lParam is a pointer to a vector of anime IDs.
+  } else if (action == L"EditDateToLastUpdated") {
+    const auto& anime_ids = *reinterpret_cast<std::vector<int>*>(lParam);
+    for (const auto& anime_id : anime_ids) {
+      auto anime_item = AnimeDatabase.FindItem(anime_id);
+      if (!anime_item || anime_item->GetMyDateEnd())
+        continue;
+      const auto last_updated = ToTime(anime_item->GetMyLastUpdated());
+      if (!last_updated)
+        continue;
+      HistoryItem history_item;
+      history_item.anime_id = anime_id;
+      history_item.date_finish = GetDate(last_updated);
+      history_item.mode = taiga::kHttpServiceUpdateLibraryEntry;
+      History.queue.Add(history_item);
+    }
+
   // EditDelete()
   //   Removes an anime from list.
   //   lParam is a pointer to a vector of anime IDs.
@@ -402,7 +525,7 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
 
   // EditScore(value)
   //   Changes anime score.
-  //   Value must be between 0-10 and different from current score.
+  //   Value must be between 0-100 and different from current score.
   //   lParam is a pointer to a vector of anime IDs.
   } else if (action == L"EditScore") {
     const auto& anime_ids = *reinterpret_cast<std::vector<int>*>(lParam);
@@ -460,6 +583,22 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
       }
     }
 
+  // EditNotes(notes)
+  //   Changes anime notes.
+  //   lParam is a pointer to a vector of anime IDs.
+  } else if (action == L"EditNotes") {
+    const auto& anime_ids = *reinterpret_cast<std::vector<int>*>(lParam);
+    std::wstring notes;
+    if (ui::OnLibraryEntriesEditNotes(anime_ids, notes)) {
+      for (const auto& anime_id : anime_ids) {
+        HistoryItem history_item;
+        history_item.anime_id = anime_id;
+        history_item.notes = notes;
+        history_item.mode = taiga::kHttpServiceUpdateLibraryEntry;
+        History.queue.Add(history_item);
+      }
+    }
+
   //////////////////////////////////////////////////////////////////////////////
 
   // OpenFolder()
@@ -477,7 +616,7 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
         std::wstring default_path, path;
         if (!Settings.library_folders.empty())
           default_path = Settings.library_folders.front();
-        if (win::BrowseForFolder(ui::GetWindowHandle(ui::kDialogMain),
+        if (win::BrowseForFolder(ui::GetWindowHandle(ui::Dialog::Main),
                                  L"Select Anime Folder",
                                  default_path, path)) {
           anime_item->SetFolder(path);
@@ -486,8 +625,15 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
       }
     }
     ui::ClearStatusText();
-    if (!anime_item->GetFolder().empty()) {
-      Execute(anime_item->GetFolder());
+    const auto next_episode_path = anime_item->GetNextEpisodePath();
+    const auto anime_folder = anime_item->GetFolder();
+    if (!next_episode_path.empty()) {
+      if (anime_folder.empty() || StartsWith(next_episode_path, anime_folder))
+        if (OpenFolderAndSelectFile(next_episode_path))
+          return;
+    }
+    if (!anime_folder.empty()) {
+      Execute(anime_folder);
     }
 
   //////////////////////////////////////////////////////////////////////////////
@@ -530,16 +676,37 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
   } else if (action == L"PlayRandomAnime") {
     anime::PlayRandomAnime();
 
+  // StartNewRewatch()
+  //   Sets status to Currently Watching and plays first episode.
+  } else if (action == L"StartNewRewatch") {
+    int anime_id = static_cast<int>(lParam);
+    anime::StartNewRewatch(anime_id);
+
   //////////////////////////////////////////////////////////////////////////////
 
   // Season_Load(file)
   //   Loads season data.
   } else if (action == L"Season_Load") {
-    if (SeasonDatabase.LoadSeason(body)) {
-      Settings.Set(taiga::kApp_Seasons_LastSeason,
-                   SeasonDatabase.current_season.GetString());
-      SeasonDatabase.Review();
-      ui::OnSeasonLoad(SeasonDatabase.IsRefreshRequired());
+    switch (taiga::GetCurrentServiceId()) {
+      case sync::kMyAnimeList:
+        if (SeasonDatabase.LoadSeason(body)) {
+          Settings.Set(taiga::kApp_Seasons_LastSeason,
+                       SeasonDatabase.current_season.GetString());
+          SeasonDatabase.Review();
+          ui::OnSeasonLoad(SeasonDatabase.IsRefreshRequired());
+        }
+        break;
+      case sync::kKitsu:
+      case sync::kAniList:
+        if (SeasonDatabase.LoadSeasonFromMemory(body)) {
+          Settings.Set(taiga::kApp_Seasons_LastSeason,
+                       SeasonDatabase.current_season.GetString());
+          ui::OnSeasonLoad(false);
+          if (SeasonDatabase.items.empty()) {
+            ui::DlgSeason.GetData();
+          }
+        }
+        break;
     }
 
   // Season_GroupBy(group)
@@ -574,6 +741,6 @@ void ExecuteAction(std::wstring action, WPARAM wParam, LPARAM lParam) {
 
   // Unknown
   } else {
-    LOG(LevelWarning, L"Unknown action: " + action);
+    LOGW(L"Unknown action: {}", action);
   }
 }

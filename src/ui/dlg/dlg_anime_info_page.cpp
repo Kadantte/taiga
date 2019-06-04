@@ -1,26 +1,31 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "base/foreach.h"
+#include <windows/win/common_dialogs.h>
+
+#include "base/format.h"
 #include "base/string.h"
 #include "library/anime_db.h"
 #include "library/anime_util.h"
 #include "library/history.h"
+#include "sync/anilist_util.h"
+#include "sync/kitsu_util.h"
+#include "sync/myanimelist_util.h"
 #include "sync/sync.h"
 #include "taiga/resource.h"
 #include "taiga/settings.h"
@@ -32,7 +37,7 @@
 #include "ui/dlg/dlg_settings_page.h"
 #include "ui/dialog.h"
 #include "ui/theme.h"
-#include "win/win_commondialog.h"
+#include "ui/ui.h"
 
 namespace ui {
 
@@ -41,7 +46,7 @@ PageBaseInfo::PageBaseInfo()
 }
 
 BOOL PageBaseInfo::OnClose() {
-  if (parent && parent->GetMode() == kDialogModeAnimeInformation)
+  if (parent && parent->GetMode() == AnimeDialogMode::AnimeInformation)
     parent->OnCancel();
 
   return TRUE;  // Disables closing via Escape key
@@ -104,7 +109,7 @@ void PageBaseInfo::OnSize(UINT uMsg, UINT nType, SIZE size) {
     case WM_SIZE: {
       win::Rect rect;
       rect.Set(0, 0, size.cx, size.cy);
-      rect.Inflate(-ScaleX(win::kControlMargin), -ScaleY(win::kControlMargin));
+      rect.Inflate(-ScaleX(kControlMargin), -ScaleY(kControlMargin));
 
       // Headers
       for (int i = 0; i < 3; i++) {
@@ -131,25 +136,25 @@ void PageSeriesInfo::OnSize(UINT uMsg, UINT nType, SIZE size) {
     case WM_SIZE: {
       win::Rect rect;
       rect.Set(0, 0, size.cx, size.cy);
-      rect.Inflate(-ScaleX(win::kControlMargin), -ScaleY(win::kControlMargin));
+      rect.Inflate(-ScaleX(kControlMargin), -ScaleY(kControlMargin));
 
       // Synonyms
       win::Rect rect_child;
       win::Window window = GetDlgItem(IDC_EDIT_ANIME_ALT);
       window.GetWindowRect(GetWindowHandle(), &rect_child);
-      rect_child.right = rect.right - ScaleX(win::kControlMargin);
+      rect_child.right = rect.right - ScaleX(kControlMargin);
       window.SetPosition(nullptr, rect_child);
 
       // Details
       window.SetWindowHandle(GetDlgItem(IDC_STATIC_ANIME_DETAILS));
       window.GetWindowRect(GetWindowHandle(), &rect_child);
-      rect_child.right = rect.right - ScaleX(win::kControlMargin);
+      rect_child.right = rect.right - ScaleX(kControlMargin);
       window.SetPosition(nullptr, rect_child);
 
       // Synopsis
       window.SetWindowHandle(GetDlgItem(IDC_EDIT_ANIME_SYNOPSIS));
       window.GetWindowRect(GetWindowHandle(), &rect_child);
-      rect_child.right = rect.right - ScaleX(win::kControlMargin);
+      rect_child.right = rect.right - ScaleX(kControlMargin);
       rect_child.bottom = rect.bottom;
       window.SetPosition(nullptr, rect_child);
       window.SetWindowHandle(nullptr);
@@ -171,8 +176,7 @@ void PageSeriesInfo::Refresh(int anime_id, bool connect) {
     return;
 
   // Set alternative titles
-  std::wstring main_title = Settings.GetBool(taiga::kApp_List_DisplayEnglishTitles) ?
-      anime_item->GetEnglishTitle(true) : anime_item->GetTitle();
+  const auto main_title = anime::GetPreferredTitle(*anime_item);
   std::vector<std::wstring> titles;
   anime::GetAllTitles(anime_id_, titles);
   titles.erase(std::remove(titles.begin(), titles.end(), main_title), titles.end());
@@ -182,6 +186,12 @@ void PageSeriesInfo::Refresh(int anime_id, bool connect) {
   SetDlgItemText(IDC_EDIT_ANIME_ALT, text.c_str());
 
   // Set information
+  switch (taiga::GetCurrentServiceId()) {
+    case sync::kKitsu:
+      SetDlgItemText(IDC_STATIC_ANIME_DETAILS_NAMES,
+          L"Type:\nEpisodes:\nStatus:\nSeason:\nCategories:\nProducers:\nScore:");
+      break;
+  }
   text = anime::TranslateType(anime_item->GetType()) + L"\n" +
          anime::TranslateNumber(anime_item->GetEpisodeCount(), L"Unknown") + L"\n" +
          anime::TranslateStatus(anime_item->GetAiringStatus()) + L"\n" +
@@ -230,18 +240,26 @@ BOOL PageMyInfo::OnCommand(WPARAM wParam, LPARAM lParam) {
     case IDC_CHECK_ANIME_REWATCH:
       if (HIWORD(wParam) == BN_CLICKED) {
         win::ComboBox combobox = GetDlgItem(IDC_COMBO_ANIME_STATUS);
-        win::Spin spin = GetDlgItem(IDC_SPIN_PROGRESS);
+        win::Spin spin = GetDlgItem(IDC_SPIN_ANIME_PROGRESS);
         int episode_value = 0;
         spin.GetPos32(episode_value);
         if (IsDlgButtonChecked(IDC_CHECK_ANIME_REWATCH)) {
-          if (taiga::GetCurrentServiceId() == sync::kHummingbird)
-            combobox.SetCurSel(anime::kWatching - 1);
+          switch (taiga::GetCurrentServiceId()) {
+            case sync::kKitsu:
+            case sync::kAniList:
+              combobox.SetCurSel(anime::kWatching - 1);
+              break;
+          }
           if (anime_item->GetMyStatus() == anime::kCompleted &&
               episode_value == anime_item->GetEpisodeCount())
             spin.SetPos32(0);
         } else {
-          if (taiga::GetCurrentServiceId() == sync::kHummingbird)
-            combobox.SetCurSel(anime_item->GetMyStatus() - 1);
+          switch (taiga::GetCurrentServiceId()) {
+            case sync::kKitsu:
+            case sync::kAniList:
+              combobox.SetCurSel(anime_item->GetMyStatus() - 1);
+              break;
+          }
           if (episode_value == 0)
             spin.SetPos32(anime_item->GetMyLastWatchedEpisode());
         }
@@ -259,7 +277,7 @@ BOOL PageMyInfo::OnCommand(WPARAM wParam, LPARAM lParam) {
         if (combobox.GetItemData(combobox.GetCurSel()) == anime::kCompleted)
           if (anime_item->GetMyStatus() != anime::kCompleted &&
               anime_item->GetEpisodeCount() > 0)
-            SendDlgItemMessage(IDC_SPIN_PROGRESS, UDM_SETPOS32, 0, anime_item->GetEpisodeCount());
+            SendDlgItemMessage(IDC_SPIN_ANIME_PROGRESS, UDM_SETPOS32, 0, anime_item->GetEpisodeCount());
         combobox.SetWindowHandle(nullptr);
         return TRUE;
       }
@@ -285,6 +303,21 @@ LRESULT PageMyInfo::OnNotify(int idCtrl, LPNMHDR pnmh) {
         finish_date_changed_ = true;
       break;
 
+    case IDC_SPIN_ANIME_SCORE:
+      if (pnmh->code == UDN_DELTAPOS) {
+        const std::pair<int, int> range;
+        SendDlgItemMessage(IDC_SPIN_ANIME_SCORE, UDM_GETRANGE32,
+                           reinterpret_cast<WPARAM>(&range.first),
+                           reinterpret_cast<LPARAM>(&range.second));
+        const auto nmud = *reinterpret_cast<LPNMUPDOWN>(pnmh);
+        const int proposed_value = nmud.iPos + nmud.iDelta;
+        if (range.first <= proposed_value && proposed_value <= range.second) {
+          const auto value = anime::TranslateMyScore(proposed_value, L"0");
+          SetDlgItemText(IDC_EDIT_ANIME_SCORE, value.c_str());
+        }
+      }
+      break;
+
     case IDC_LINK_ANIME_FANSUB:
       switch (pnmh->code) {
         case NM_CLICK:
@@ -298,12 +331,12 @@ LRESULT PageMyInfo::OnNotify(int idCtrl, LPNMHDR pnmh) {
           } else {
             std::wstring text = Join(groups, L", ");
             InputDialog dlg;
-            dlg.title = anime_item->GetTitle();
+            dlg.title = anime::GetPreferredTitle(*anime_item);
             dlg.info = L"Please enter your fansub group preference for this title:";
             dlg.text = text;
             dlg.Show(parent->GetWindowHandle());
             if (dlg.result == IDOK && dlg.text != text)
-              if (anime::SetFansubFilter(anime_id_, dlg.text))
+              if (anime::SetFansubFilter(anime_id_, dlg.text, L""))
                 RefreshFansubPreference();
           }
           return TRUE;
@@ -326,9 +359,10 @@ void PageMyInfo::Refresh(int anime_id) {
     return;
 
   // Episodes watched
-  SendDlgItemMessage(IDC_SPIN_PROGRESS, UDM_SETRANGE32, 0,
-                     anime_item->GetEpisodeCount() > 0 ? anime_item->GetEpisodeCount() : 9999);
-  SendDlgItemMessage(IDC_SPIN_PROGRESS, UDM_SETPOS32, 0, anime_item->GetMyLastWatchedEpisode());
+  win::Spin spin = GetDlgItem(IDC_SPIN_ANIME_PROGRESS);
+  spin.SetRange32(0, anime_item->GetEpisodeCount() > 0 ? anime_item->GetEpisodeCount() : 9999);
+  spin.SetPos32(anime_item->GetMyLastWatchedEpisode());
+  spin.SetWindowHandle(nullptr);
 
   // Rewatching
   CheckDlgButton(IDC_CHECK_ANIME_REWATCH, anime_item->GetMyRewatching());
@@ -343,18 +377,65 @@ void PageMyInfo::Refresh(int anime_id) {
 
   // Score
   combobox.SetWindowHandle(GetDlgItem(IDC_COMBO_ANIME_SCORE));
+  win::Edit edit = GetDlgItem(IDC_EDIT_ANIME_SCORE);
+  spin.SetWindowHandle(GetDlgItem(IDC_SPIN_ANIME_SCORE));
   if (combobox.GetCount() == 0) {
-    for (int i = 10; i >= 0; i--) {
-      combobox.AddString(anime::TranslateMyScoreFull(i).c_str());
+    std::vector<sync::Rating> ratings;
+    std::wstring current_rating;
+    int selected_item = -1;
+    switch (taiga::GetCurrentServiceId()) {
+      case sync::kMyAnimeList:
+        ratings = sync::myanimelist::GetMyRatings();
+        current_rating = sync::myanimelist::TranslateMyRating(anime_item->GetMyScore(), true);
+        break;
+      case sync::kKitsu: {
+        const auto rating_system = sync::kitsu::GetRatingSystem();
+        ratings = sync::kitsu::GetMyRatings(rating_system);
+        current_rating = sync::kitsu::TranslateMyRating(anime_item->GetMyScore(), rating_system);
+        break;
+      }
+      case sync::kAniList: {
+        const auto rating_system = sync::anilist::GetRatingSystem();
+        ratings = sync::anilist::GetMyRatings(rating_system);
+        current_rating = sync::anilist::TranslateMyRating(anime_item->GetMyScore(), rating_system);
+        break;
+      }
     }
+    for (auto it = ratings.rbegin(); it != ratings.rend(); ++it) {
+      const auto& rating = *it;
+      combobox.AddItem(rating.text.c_str(), rating.value);
+      if (selected_item == -1 && current_rating == rating.text)
+        selected_item = combobox.GetCount() - 1;
+    }
+    if (selected_item > -1)
+      combobox.SetCurSel(selected_item);
+    edit.SetText(current_rating);
+    spin.SetRange32(0, anime::kUserScoreMax);
+    spin.SetPos32(anime_item->GetMyScore());
+    const bool use_spin_for_score_input = IsAdvancedScoreInput();
+    combobox.Show(!use_spin_for_score_input ? SW_SHOWNORMAL : SW_HIDE);
+    edit.Show(use_spin_for_score_input ? SW_SHOWNORMAL : SW_HIDE);
+    spin.Show(use_spin_for_score_input ? SW_SHOWNORMAL : SW_HIDE);
   }
-  combobox.SetCurSel(10 - anime_item->GetMyScore());
   combobox.SetWindowHandle(nullptr);
+  edit.SetWindowHandle(nullptr);
+  spin.SetWindowHandle(nullptr);
 
-  // Tags
-  win::Edit edit = GetDlgItem(IDC_EDIT_ANIME_TAGS);
-  edit.SetCueBannerText(L"Enter tags here, separated by a comma (e.g. tag1, tag2)");
-  edit.SetText(anime_item->GetMyTags());
+  // Tags / Notes
+  edit.SetWindowHandle(GetDlgItem(IDC_EDIT_ANIME_TAGS));
+  switch (taiga::GetCurrentServiceId()) {
+    case sync::kMyAnimeList:
+      SetDlgItemText(IDC_STATIC_TAGSNOTES, L"Tags:");
+      edit.SetCueBannerText(L"Enter tags here, separated by a comma (e.g. tag1, tag2)");
+      edit.SetText(anime_item->GetMyTags());
+      break;
+    case sync::kKitsu:
+    case sync::kAniList:
+      SetDlgItemText(IDC_STATIC_TAGSNOTES, L"Notes:");
+      edit.SetCueBannerText(L"Enter your notes about this anime");
+      edit.SetText(anime_item->GetMyNotes());
+      break;
+  }
   edit.SetWindowHandle(nullptr);
 
   // Dates
@@ -367,12 +448,12 @@ void PageMyInfo::Refresh(int anime_id) {
     SendDlgItemMessage(control_id, DTM_SETSYSTEMTIME, GDT_VALID, (LPARAM)&st);
   };
   if (anime::IsValidDate(anime_item->GetDateStart())) {
-    SYSTEMTIME stSeriesStart = anime_item->GetDateStart();
+    auto stSeriesStart = static_cast<SYSTEMTIME>(anime_item->GetDateStart());
     set_default_systemtime(IDC_DATETIME_START, stSeriesStart);
     set_default_systemtime(IDC_DATETIME_FINISH, stSeriesStart);
   }
   if (anime::IsValidDate(anime_item->GetDateEnd())) {
-    SYSTEMTIME stSeriesEnd = anime_item->GetDateEnd();
+    auto stSeriesEnd = static_cast<SYSTEMTIME>(anime_item->GetDateEnd());
     set_default_systemtime(IDC_DATETIME_FINISH, stSeriesEnd);
   }
   auto fix_systemtime = [](SYSTEMTIME& st) {
@@ -380,14 +461,14 @@ void PageMyInfo::Refresh(int anime_id) {
     if (!st.wDay) st.wDay = 1;
   };
   if (anime::IsValidDate(anime_item->GetMyDateStart())) {
-    SYSTEMTIME stMyStart = anime_item->GetMyDateStart();
+    auto stMyStart = static_cast<SYSTEMTIME>(anime_item->GetMyDateStart());
     fix_systemtime(stMyStart);
     SendDlgItemMessage(IDC_DATETIME_START, DTM_SETSYSTEMTIME, GDT_VALID, (LPARAM)&stMyStart);
   } else {
     SendDlgItemMessage(IDC_DATETIME_START, DTM_SETSYSTEMTIME, GDT_NONE, 0);
   }
   if (anime::IsValidDate(anime_item->GetMyDateEnd())) {
-    SYSTEMTIME stMyFinish = anime_item->GetMyDateEnd();
+    auto stMyFinish = static_cast<SYSTEMTIME>(anime_item->GetMyDateEnd());
     fix_systemtime(stMyFinish);
     SendDlgItemMessage(IDC_DATETIME_FINISH, DTM_SETSYSTEMTIME, GDT_VALID, (LPARAM)&stMyFinish);
   } else {
@@ -418,10 +499,10 @@ void PageMyInfo::RefreshFansubPreference() {
   std::vector<std::wstring> groups;
 
   if (anime::GetFansubFilter(anime_id_, groups)) {
-    foreach_(it, groups) {
+    for (const auto& group : groups) {
       if (!text.empty())
         text += L" or ";
-      text += L"\"" + *it + L"\"";
+      text += L"\"" + group + L"\"";
     }
   } else {
     text = L"None";
@@ -445,8 +526,8 @@ bool PageMyInfo::Save() {
   // Episodes watched
   history_item.episode = GetDlgItemInt(IDC_EDIT_ANIME_PROGRESS);
   if (!anime::IsValidEpisodeNumber(*history_item.episode, anime_item->GetEpisodeCount())) {
-    std::wstring msg = L"Please enter a valid episode number between 0-" +
-                  ToWstr(anime_item->GetEpisodeCount()) + L".";
+    std::wstring msg = L"Please enter a valid episode number between 0-{}."_format(
+        anime_item->GetEpisodeCount());
     MessageBox(msg.c_str(), L"Episodes watched", MB_OK | MB_ICONERROR);
     return false;
   }
@@ -455,13 +536,38 @@ bool PageMyInfo::Save() {
   history_item.enable_rewatching = IsDlgButtonChecked(IDC_CHECK_ANIME_REWATCH);
 
   // Score
-  history_item.score = 10 - GetComboSelection(IDC_COMBO_ANIME_SCORE);
+  win::ComboBox combobox = GetDlgItem(IDC_COMBO_ANIME_SCORE);
+  if (!IsAdvancedScoreInput()) {
+    history_item.score = combobox.GetItemData(combobox.GetCurSel());
+  } else {
+    const auto score_text = GetDlgItemText(IDC_EDIT_ANIME_SCORE);
+    switch (taiga::GetCurrentServiceId()) {
+      case sync::kAniList:
+        switch (sync::anilist::GetRatingSystem()) {
+          case sync::anilist::RatingSystem::Point_10_Decimal:
+            history_item.score = static_cast<int>(ToDouble(score_text) * 10);
+            break;
+        }
+        break;
+    }
+    if (!history_item.score)
+      history_item.score = ToInt(score_text);
+  }
+  combobox.SetWindowHandle(nullptr);
 
   // Status
   history_item.status = GetComboSelection(IDC_COMBO_ANIME_STATUS) + 1;
 
-  // Tags
-  history_item.tags = GetDlgItemText(IDC_EDIT_ANIME_TAGS);
+  // Tags / Notes
+  switch (taiga::GetCurrentServiceId()) {
+    case sync::kMyAnimeList:
+      history_item.tags = GetDlgItemText(IDC_EDIT_ANIME_TAGS);
+      break;
+    case sync::kKitsu:
+    case sync::kAniList:
+      history_item.notes = GetDlgItemText(IDC_EDIT_ANIME_TAGS);
+      break;
+  }
 
   // Start date
   if (start_date_changed_) {
@@ -498,6 +604,21 @@ bool PageMyInfo::Save() {
   // Add item to queue
   History.queue.Add(history_item);
   return true;
+}
+
+bool PageMyInfo::IsAdvancedScoreInput() const {
+  switch (taiga::GetCurrentServiceId()) {
+    case sync::kAniList: {
+      switch (sync::anilist::GetRatingSystem()) {
+        case sync::anilist::RatingSystem::Point_100:
+        case sync::anilist::RatingSystem::Point_10_Decimal:
+          return true;
+      }
+      break;
+    }
+  }
+
+  return false;
 }
 
 }  // namespace ui

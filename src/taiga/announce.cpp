@@ -1,37 +1,40 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <discord_rpc.h>
+#include <windows/win/dde.h>
+
 #include "base/file.h"
-#include "base/foreach.h"
 #include "base/log.h"
 #include "base/string.h"
 #include "base/url.h"
 #include "library/anime.h"
 #include "library/anime_episode.h"
 #include "library/anime_util.h"
+#include "sync/service.h"
 #include "taiga/announce.h"
 #include "taiga/http.h"
 #include "taiga/script.h"
 #include "taiga/settings.h"
 #include "ui/ui.h"
-#include "win/win_dde.h"
 
 taiga::Announcer Announcer;
+taiga::Discord Discord;
 taiga::Mirc Mirc;
 taiga::Skype Skype;
 taiga::Twitter Twitter;
@@ -39,6 +42,10 @@ taiga::Twitter Twitter;
 namespace taiga {
 
 void Announcer::Clear(int modes, bool force) {
+  if (modes & kAnnounceToDiscord)
+    if (Settings.GetBool(kShare_Discord_Enabled) || force)
+      ::Discord.ClearPresence();
+
   if (modes & kAnnounceToHttp)
     if (Settings.GetBool(kShare_Http_Enabled) || force)
       ToHttp(Settings[kShare_Http_Url], L"");
@@ -57,7 +64,7 @@ void Announcer::Do(int modes, anime::Episode* episode, bool force) {
 
   if (modes & kAnnounceToHttp) {
     if (Settings.GetBool(kShare_Http_Enabled) || force) {
-      LOG(LevelDebug, L"HTTP");
+      LOGD(L"HTTP");
       ToHttp(Settings[kShare_Http_Url],
              ReplaceVariables(Settings[kShare_Http_Format],
                               *episode, true, force));
@@ -67,9 +74,23 @@ void Announcer::Do(int modes, anime::Episode* episode, bool force) {
   if (!anime::IsValidId(episode->anime_id))
     return;
 
+  if (modes & kAnnounceToDiscord) {
+    if (Settings.GetBool(kShare_Discord_Enabled) || force) {
+      LOGD(L"Discord");
+      auto timestamp = ::time(nullptr);
+      if (!force)
+        timestamp -= Settings.GetInt(taiga::kSync_Update_Delay);
+      ToDiscord(ReplaceVariables(Settings[kShare_Discord_Format_Details],
+                                 *episode, false, force),
+                ReplaceVariables(Settings[kShare_Discord_Format_State],
+                                 *episode, false, force),
+                timestamp);
+    }
+  }
+
   if (modes & kAnnounceToMirc) {
     if (Settings.GetBool(kShare_Mirc_Enabled) || force) {
-      LOG(LevelDebug, L"mIRC");
+      LOGD(L"mIRC");
       ToMirc(Settings[kShare_Mirc_Service],
              Settings[kShare_Mirc_Channels],
              ReplaceVariables(Settings[kShare_Mirc_Format],
@@ -82,7 +103,7 @@ void Announcer::Do(int modes, anime::Episode* episode, bool force) {
 
   if (modes & kAnnounceToSkype) {
     if (Settings.GetBool(kShare_Skype_Enabled) || force) {
-      LOG(LevelDebug, L"Skype");
+      LOGD(L"Skype");
       ToSkype(ReplaceVariables(Settings[kShare_Skype_Format],
                                *episode, false, force));
     }
@@ -90,11 +111,92 @@ void Announcer::Do(int modes, anime::Episode* episode, bool force) {
 
   if (modes & kAnnounceToTwitter) {
     if (Settings.GetBool(kShare_Twitter_Enabled) || force) {
-      LOG(LevelDebug, L"Twitter");
+      LOGD(L"Twitter");
       ToTwitter(ReplaceVariables(Settings[kShare_Twitter_Format],
                                  *episode, false, force));
     }
   }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Discord
+
+Discord::~Discord() {
+  ClearPresence();
+  Shutdown();
+}
+
+void Discord::Initialize() const {
+  DiscordEventHandlers handlers = {0};
+  handlers.ready = OnReady;
+  handlers.disconnected = OnDisconnected;
+  handlers.errored = OnError;
+
+  const auto application_id = WstrToStr(Settings[kShare_Discord_ApplicationId]);
+
+  Discord_Initialize(application_id.c_str(), &handlers, FALSE, nullptr);
+}
+
+void Discord::Shutdown() const {
+  Discord_Shutdown();
+}
+
+void Discord::ClearPresence() const {
+  Discord_ClearPresence();
+  RunCallbacks();
+}
+
+void Discord::UpdatePresence(const std::string& details,
+                             const std::string& state,
+                             time_t timestamp) const {
+  const std::string small_image_key =
+      WstrToStr(GetCurrentService()->canonical_name());
+
+  std::string small_image_text =
+      WstrToStr(GetCurrentService()->name());
+  if (Settings.GetBool(kShare_Discord_Username_Enabled)) {
+    small_image_text = WstrToStr(GetCurrentUserDisplayName() + L" at ") +
+                       small_image_text;
+  }
+
+  DiscordRichPresence presence = {0};
+  presence.state = state.c_str();
+  presence.details = details.c_str();
+  presence.startTimestamp = timestamp;
+  presence.largeImageKey = "default";
+  presence.largeImageText = details.c_str();
+  presence.smallImageKey = small_image_key.c_str();
+  presence.smallImageText = small_image_text.c_str();
+
+  Discord_UpdatePresence(&presence);
+  RunCallbacks();
+}
+
+void Discord::RunCallbacks() const {
+#ifdef DISCORD_DISABLE_IO_THREAD
+  Discord_UpdateConnection();
+#endif
+  Discord_RunCallbacks();
+}
+
+void Discord::OnReady() {
+  LOGD(L"Discord: ready");
+}
+
+void Discord::OnDisconnected(int errcode, const char* message) {
+  LOGD(L"Discord: disconnected ({}: {})", errcode, message);
+}
+
+void Discord::OnError(int errcode, const char* message) {
+  LOGD(L"Discord: error ({}: {})", errcode, message);
+}
+
+void Announcer::ToDiscord(const std::wstring& details,
+                          const std::wstring& state,
+                          time_t timestamp) {
+  ::Discord.UpdatePresence(WstrToStr(LimitText(details, 64)),
+                           WstrToStr(LimitText(state, 64)),
+                           timestamp);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -173,7 +275,7 @@ bool Mirc::Send(const std::wstring& service,
   // List channels
   std::vector<std::wstring> channel_list;
   std::wstring active_channel;
-  
+
   switch (mode) {
     case kMircChannelModeActive:
     case kMircChannelModeAll:
@@ -263,11 +365,11 @@ bool Skype::SendCommand(const std::wstring& command) {
   if (SendMessage(hwnd_skype, WM_COPYDATA,
                   reinterpret_cast<WPARAM>(hwnd),
                   reinterpret_cast<LPARAM>(&cds)) == FALSE) {
-    LOG(LevelError, L"WM_COPYDATA failed.");
+    LOGE(L"WM_COPYDATA failed.");
     hwnd_skype = nullptr;
     return false;
   } else {
-    LOG(LevelDebug, L"WM_COPYDATA succeeded.");
+    LOGD(L"WM_COPYDATA succeeded.");
     return true;
   }
 }
@@ -308,13 +410,13 @@ LRESULT Skype::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
     auto pCDS = reinterpret_cast<PCOPYDATASTRUCT>(lParam);
     std::wstring command = StrToWstr(reinterpret_cast<LPCSTR>(pCDS->lpData));
-    LOG(LevelDebug, L"Received WM_COPYDATA: " + command);
+    LOGD(L"Received WM_COPYDATA: {}", command);
 
     std::wstring profile_command = L"PROFILE RICH_MOOD_TEXT ";
     if (StartsWith(command, profile_command)) {
       std::wstring mood = command.substr(profile_command.length());
       if (mood != current_mood && mood != previous_mood) {
-        LOG(LevelDebug, L"Saved previous mood message: " + mood);
+        LOGD(L"Saved previous mood message: {}", mood);
         previous_mood = mood;
       }
     }
@@ -326,34 +428,34 @@ LRESULT Skype::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
     switch (lParam) {
       case kSkypeControlApiAttachSuccess:
-        LOG(LevelDebug, L"Attach succeeded.");
+        LOGD(L"Attach succeeded.");
         hwnd_skype = reinterpret_cast<HWND>(wParam);
         GetMoodText();
         if (!current_mood.empty())
           SetMoodText(current_mood);
         break;
       case kSkypeControlApiAttachPendingAuthorization:
-        LOG(LevelDebug, L"Waiting for user confirmation...");
+        LOGD(L"Waiting for user confirmation...");
         break;
       case kSkypeControlApiAttachRefused:
-        LOG(LevelError, L"User denied access to client.");
+        LOGE(L"User denied access to client.");
         break;
       case kSkypeControlApiAttachNotAvailable:
-        LOG(LevelError, L"API is not available.");
+        LOGE(L"API is not available.");
         break;
       case kSkypeControlApiAttachApiAvailable:
-        LOG(LevelDebug, L"API is now available.");
+        LOGD(L"API is now available.");
         Discover();
         break;
       default:
-        LOG(LevelDebug, L"Received unknown message.");
+        LOGD(L"Received unknown message.");
         break;
     }
 
     return TRUE;
 
   } else if (uMsg == wm_discover) {
-    LOG(LevelDebug, L"Received SkypeControlAPIDiscover message.");
+    LOGD(L"Received SkypeControlAPIDiscover message.");
   }
 
   return FALSE;
@@ -380,7 +482,7 @@ Twitter::Twitter() {
 
 bool Twitter::RequestToken() {
   HttpRequest http_request;
-  http_request.url.protocol = base::http::kHttps;
+  http_request.url.protocol = base::http::Protocol::Https;
   http_request.url.host = L"api.twitter.com";
   http_request.url.path = L"/oauth/request_token";
   http_request.header[L"Authorization"] =
@@ -393,7 +495,7 @@ bool Twitter::RequestToken() {
 bool Twitter::AccessToken(const std::wstring& key, const std::wstring& secret,
                           const std::wstring& pin) {
   HttpRequest http_request;
-  http_request.url.protocol = base::http::kHttps;
+  http_request.url.protocol = base::http::Protocol::Https;
   http_request.url.host = L"api.twitter.com";
   http_request.url.path = L"/oauth/access_token";
   http_request.header[L"Authorization"] =
@@ -418,7 +520,7 @@ bool Twitter::SetStatusText(const std::wstring& status_text) {
 
   HttpRequest http_request;
   http_request.method = L"POST";
-  http_request.url.protocol = base::http::kHttps;
+  http_request.url.protocol = base::http::Protocol::Https;
   http_request.url.host = L"api.twitter.com";
   http_request.url.path = L"/1.1/statuses/update.json";
   http_request.body = L"status=" + post_parameters[L"status"];

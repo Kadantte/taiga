@@ -1,30 +1,30 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include <algorithm>
 
-#include "base/foreach.h"
+#include <windows/win/gdi.h>
+
 #include "base/string.h"
 #include "library/anime_db.h"
 #include "library/anime_util.h"
 #include "taiga/resource.h"
 #include "ui/dlg/dlg_feed_condition.h"
-#include "win/win_gdi.h"
 
 namespace ui {
 
@@ -96,6 +96,7 @@ INT_PTR FeedConditionDialog::DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPA
     case WM_CTLCOLORSTATIC: {
       win::Dc dc = reinterpret_cast<HDC>(wParam);
       dc.SetBkMode(TRANSPARENT);
+      dc.SetTextColor(::GetSysColor(COLOR_WINDOWTEXT));
       dc.DetachDc();
       return reinterpret_cast<INT_PTR>(::GetSysColorBrush(COLOR_WINDOW));
     }
@@ -125,6 +126,13 @@ void FeedConditionDialog::OnOK() {
       break;
     default:
       value_combo_.GetText(condition.value);
+  }
+
+  switch (condition.element) {
+    case kFeedFilterElement_File_Size:
+      if (IsNumericString(condition.value))
+        condition.value += L" MiB";
+      break;
   }
 
   EndDialog(IDOK);
@@ -173,6 +181,7 @@ void FeedConditionDialog::ChooseElement(int element_index) {
     operator_combo_.AddItem(Aggregator.filter_manager.TranslateOperator(op).c_str(), op);
 
   switch (element_index) {
+    case kFeedFilterElement_File_Size:
     case kFeedFilterElement_Meta_Id:
     case kFeedFilterElement_Episode_Number:
     case kFeedFilterElement_Meta_DateStart:
@@ -185,6 +194,7 @@ void FeedConditionDialog::ChooseElement(int element_index) {
       ADD_OPERATOR(kFeedFilterOperator_IsLessThan);
       ADD_OPERATOR(kFeedFilterOperator_IsLessThanOrEqualTo);
       break;
+    case kFeedFilterElement_File_Category:
     case kFeedFilterElement_Local_EpisodeAvailable:
     case kFeedFilterElement_Meta_Status:
     case kFeedFilterElement_Meta_Type:
@@ -197,7 +207,6 @@ void FeedConditionDialog::ChooseElement(int element_index) {
     case kFeedFilterElement_Episode_Group:
     case kFeedFilterElement_Episode_VideoType:
     case kFeedFilterElement_File_Title:
-    case kFeedFilterElement_File_Category:
     case kFeedFilterElement_File_Description:
     case kFeedFilterElement_File_Link:
       ADD_OPERATOR(kFeedFilterOperator_Equals);
@@ -234,15 +243,26 @@ void FeedConditionDialog::ChooseElement(int element_index) {
         GetWindowHandle(), nullptr, nullptr);
 
   switch (element_index) {
-    case kFeedFilterElement_File_Category:
-      RECREATE_COMBO(CBS_DROPDOWN);
-      value_combo_.AddString(L"Anime");
-      value_combo_.AddString(L"Batch");
-      value_combo_.AddString(L"Hentai");
-      value_combo_.AddString(L"Non-English");
-      value_combo_.AddString(L"Other");
-      value_combo_.AddString(L"Raws");
+    case kFeedFilterElement_File_Category: {
+      RECREATE_COMBO(CBS_DROPDOWNLIST);
+      static const std::vector<TorrentCategory> categories{
+        TorrentCategory::Anime,
+        TorrentCategory::Batch,
+        TorrentCategory::Other,
+      };
+      for (auto category : categories) {
+        value_combo_.AddItem(TranslateTorrentCategory(category).c_str(),
+                             static_cast<LPARAM>(category));
+      }
       break;
+    }
+    case kFeedFilterElement_File_Size: {
+      RECREATE_COMBO(CBS_DROPDOWN);
+      value_combo_.AddString(L"10 MiB");
+      value_combo_.AddString(L"100 MiB");
+      value_combo_.AddString(L"1 GiB");
+      break;
+    }
     case kFeedFilterElement_Meta_Id:
     case kFeedFilterElement_Episode_Title: {
       RECREATE_COMBO((element_index == kFeedFilterElement_Meta_Id ? CBS_DROPDOWNLIST : CBS_DROPDOWN));
@@ -257,7 +277,7 @@ void FeedConditionDialog::ChooseElement(int element_index) {
           default:
             title_list.push_back(std::make_pair(
                 it->second.GetId(),
-                AnimeDatabase.FindItem(it->second.GetId())->GetTitle()));
+                anime::GetPreferredTitle(*AnimeDatabase.FindItem(it->second.GetId()))));
         }
       }
       std::sort(title_list.begin(), title_list.end(),
@@ -266,8 +286,8 @@ void FeedConditionDialog::ChooseElement(int element_index) {
         });
       if (element_index == kFeedFilterElement_Meta_Id)
         value_combo_.AddString(L"(Unknown)");
-      foreach_(it, title_list)
-        value_combo_.AddItem(it->second.c_str(), it->first);
+      for (const auto& pair : title_list)
+        value_combo_.AddItem(pair.second.c_str(), pair.first);
       break;
     }
     case kFeedFilterElement_Meta_DateStart:
@@ -278,8 +298,8 @@ void FeedConditionDialog::ChooseElement(int element_index) {
       break;
     case kFeedFilterElement_Meta_Status:
       RECREATE_COMBO(CBS_DROPDOWNLIST);
-      value_combo_.AddItem(anime::TranslateStatus(anime::kAiring).c_str(), anime::kAiring);
       value_combo_.AddItem(anime::TranslateStatus(anime::kFinishedAiring).c_str(), anime::kFinishedAiring);
+      value_combo_.AddItem(anime::TranslateStatus(anime::kAiring).c_str(), anime::kAiring);
       value_combo_.AddItem(anime::TranslateStatus(anime::kNotYetAired).c_str(), anime::kNotYetAired);
       break;
     case kFeedFilterElement_Meta_Type:

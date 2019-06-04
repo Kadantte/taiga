@@ -1,17 +1,17 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -58,7 +58,7 @@ bool Engine::Parse(std::wstring filename, const ParseOptions& parse_options,
         anitomy_instance.options().ignored_strings);
 
   if (!anitomy_instance.Parse(filename)) {
-    LOG(LevelDebug, L"Could not parse filename: " + filename);
+    LOGD(L"Could not parse filename: {}", filename);
     if (episode.folder.empty())  // If not, perhaps we can parse the path later on
       return false;
   }
@@ -99,24 +99,25 @@ int Engine::Identify(anime::Episode& episode, bool give_score,
     valide_ids(episode_merged_title);
     if (!anime_ids.empty()) {
       std::swap(episode_merged_title, episode);
-      LOG(LevelDebug, L"Merged title lookup succeeded: " +
-                      episode.anime_title());
+      LOGD(L"Merged title lookup succeeded: {}", episode.anime_title());
     }
   };
 
-  // Look up anime title + episode number + episode title
-  if (!episode.elements().empty(anitomy::kElementEpisodeNumber) &&
-      !episode.elements().empty(anitomy::kElementEpisodeTitle)) {
-    static const auto elements =
-        {anitomy::kElementEpisodeNumber, anitomy::kElementEpisodeTitle};
-    look_up_merged_title(elements);
-  }
-  // Look up anime title + episode number
-  if (!episode.elements().empty(anitomy::kElementEpisodeNumber) &&
-      (episode.elements().empty(anitomy::kElementFileExtension) ||
-       !episode.elements().empty(anitomy::kElementAnimeType))) {
-    static const auto elements = {anitomy::kElementEpisodeNumber};
-    look_up_merged_title(elements);
+  if (!match_options.streaming_media) {
+    // Look up anime title + episode number + episode title
+    if (!episode.elements().empty(anitomy::kElementEpisodeNumber) &&
+        !episode.elements().empty(anitomy::kElementEpisodeTitle)) {
+      static const auto elements =
+          {anitomy::kElementEpisodeNumber, anitomy::kElementEpisodeTitle};
+      look_up_merged_title(elements);
+    }
+    // Look up anime title + episode number
+    if (!episode.elements().empty(anitomy::kElementEpisodeNumber) &&
+        (episode.elements().empty(anitomy::kElementFileExtension) ||
+         !episode.elements().empty(anitomy::kElementAnimeType))) {
+      static const auto elements = {anitomy::kElementEpisodeNumber};
+      look_up_merged_title(elements);
+    }
   }
 
   // Look up anime title
@@ -136,9 +137,9 @@ int Engine::Identify(anime::Episode& episode, bool give_score,
       valide_ids(episode_from_directory);
       if (!anime_ids.empty()) {
         std::swap(episode_from_directory, episode);
-        LOG(LevelDebug, L"Parent directory lookup succeeded: " +
-                        episode_from_directory.anime_title() + L" -> " +
-                        episode.anime_title());
+        LOGD(L"Parent directory lookup succeeded: {} -> {}",
+             episode_from_directory.anime_title(),
+             episode.anime_title());
       }
     }
   }
@@ -148,8 +149,8 @@ int Engine::Identify(anime::Episode& episode, bool give_score,
     // We had a redirection while validating IDs
     if (!AnimeDatabase.FindItem(episode.anime_id, false)) {
       episode.anime_id = anime::ID_UNKNOWN;
-      LOG(LevelDebug, L"Redirection failed, because destination ID is not "
-                      L"available in the database.");
+      LOGD(L"Redirection failed, because destination ID is not available in the "
+           L"database.");
     }
   } else if (anime_ids.size() == 1) {
     episode.anime_id = *anime_ids.begin();
@@ -169,8 +170,18 @@ int Engine::Identify(anime::Episode& episode, bool give_score,
       } else if (episode.elements().empty(anitomy::kElementVolumeNumber)) {
         auto anime_item = AnimeDatabase.FindItem(episode.anime_id);
         if (anime_item) {
-          int episode_count = anime_item->GetEpisodeCount();
-          episode.set_episode_number_range(std::make_pair(1, episode_count));
+          const int last_episode = [&anime_item]() {
+            switch (anime_item->GetAiringStatus()) {
+              case anime::kFinishedAiring:
+                return anime_item->GetEpisodeCount();
+              case anime::kAiring:
+                return anime::GetLastEpisodeNumber(*anime_item);
+              default:
+                return 0;
+            }
+          }();
+          if (last_episode)
+            episode.set_episode_number_range({1, last_episode});
         }
       }
     }
@@ -252,10 +263,11 @@ void Engine::UpdateTitles(const anime::Item& anime_item, bool erase_ids) {
 
   update_title(anime_item.GetTitle(), titles_.main, normal_titles_.main);
   update_title(anime_item.GetEnglishTitle(), titles_.main, normal_titles_.main);
+  update_title(anime_item.GetJapaneseTitle(), titles_.main, normal_titles_.main);
 
   const auto& date = anime_item.GetDateStart();
   if (anime::IsValidDate(date)) {
-    std::wstring year = ToWstr(date.year);
+    std::wstring year = ToWstr(date.year());
     if (anime_item.GetTitle().find(year) == std::wstring::npos) {
       update_title(anime_item.GetTitle() + L" (" + year + L")",
                    titles_.alternative, normal_titles_.alternative);

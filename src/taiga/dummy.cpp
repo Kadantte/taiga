@@ -1,17 +1,17 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -29,7 +29,8 @@ void DummyAnime::Initialize() {
   SetSource(sync::kMyAnimeList);
   SetId(L"4224", sync::kTaiga);
   SetId(L"4224", sync::kMyAnimeList);
-  SetId(L"3532", sync::kHummingbird);
+  SetId(L"3532", sync::kKitsu);
+  SetId(L"4224", sync::kAniList);
   SetSlug(L"toradora");
   SetTitle(L"Toradora!");
   SetSynonyms(L"Tiger X Dragon");
@@ -42,9 +43,10 @@ void DummyAnime::Initialize() {
   SetImageUrl(L"https://myanimelist.cdn-dena.com/images/anime/13/22128.jpg");
   AddtoUserList();
   SetMyLastWatchedEpisode(25);
-  SetMyScore(10);
+  SetMyScore(anime::kUserScoreMax);
   SetMyStatus(anime::kCompleted);
   SetMyTags(L"comedy, romance, drama");
+  SetMyNotes(L"Best series ever!");
 }
 
 void DummyEpisode::Initialize() {

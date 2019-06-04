@@ -1,23 +1,22 @@
 /*
 ** Taiga
-** Copyright (C) 2010-2014, Eren Okka
-** 
+** Copyright (C) 2010-2018, Eren Okka
+**
 ** This program is free software: you can redistribute it and/or modify
 ** it under the terms of the GNU General Public License as published by
 ** the Free Software Foundation, either version 3 of the License, or
 ** (at your option) any later version.
-** 
+**
 ** This program is distributed in the hope that it will be useful,
 ** but WITHOUT ANY WARRANTY; without even the implied warranty of
 ** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ** GNU General Public License for more details.
-** 
+**
 ** You should have received a copy of the GNU General Public License
 ** along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef TAIGA_LIBRARY_ANIME_H
-#define TAIGA_LIBRARY_ANIME_H
+#pragma once
 
 #include <string>
 #include <vector>
@@ -59,6 +58,7 @@ enum SeriesType {
 const int kUnknownEpisodeCount = -1;
 const int kUnknownEpisodeLength = -1;
 const double kUnknownScore = 0.0;
+const int kUserScoreMax = 100;
 
 enum MyStatus {
   kMyStatusFirst = 1,
@@ -86,6 +86,7 @@ class MyInformation {
   MyInformation();
   virtual ~MyInformation() {}
 
+  std::wstring id;
   int watched_episodes;
   int score;
   int status;
@@ -96,6 +97,7 @@ class MyInformation {
   Date date_finish;
   std::wstring last_updated;
   std::wstring tags;
+  std::wstring notes;
 };
 
 // For all kinds of other temporary information
@@ -107,6 +109,7 @@ class LocalInformation {
   int last_aired_episode;
   std::vector<bool> available_episodes;
   std::wstring next_episode_path;
+  time_t next_episode_time;
   std::wstring folder;
   std::vector<std::wstring> synonyms;
   bool playing;
@@ -114,5 +117,3 @@ class LocalInformation {
 };
 
 }  // namespace anime
-
-#endif  // TAIGA_LIBRARY_ANIME_H
